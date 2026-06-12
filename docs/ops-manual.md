@@ -4,7 +4,7 @@
 
 ### 1.1 服务器
 
-- **IP**：8.160.190.64（廉价 ECS）
+- **IP**：your-server-ip（廉价 ECS）
 - **系统**：Ubuntu 22.04
 - **Python**：3.10
 - **Node**：22.22.3
@@ -42,8 +42,8 @@
 ### 1.4 URL
 
 ```
-http://8.160.190.64/ainstein/          # 前端
-http://8.160.190.64/ainstein/api/*     # API
+http://your-server-ip/ainstein/          # 前端
+http://your-server-ip/ainstein/api/*     # API
 ```
 
 ## 2. 服务管理
@@ -204,7 +204,7 @@ curl -s http://localhost/ainstein/api/health
 # 应返回 {"status":"ok"}
 
 # 外部访问
-curl -s http://8.160.190.64/ainstein/api/health
+curl -s http://your-server-ip/ainstein/api/health
 ```
 
 ### 5.2 调度器状态
@@ -372,11 +372,11 @@ print(df.dtypes)
 
 ```bash
 # 假设新代码在 /tmp/ainstein/
-scp /tmp/ainstein/*.py root@8.160.190.64:/opt/ainstein/
-scp /tmp/ainstein/agents/*.py root@8.160.190.64:/opt/ainstein/agents/
-scp /tmp/ainstein/engines/*.py root@8.160.190.64:/opt/ainstein/engines/
-scp /tmp/ainstein/tools/*.py root@8.160.190.64:/opt/ainstein/tools/
-scp /tmp/ainstein/prompts/*.txt root@8.160.190.64:/opt/ainstein/prompts/
+scp /tmp/ainstein/*.py root@your-server-ip:/opt/ainstein/
+scp /tmp/ainstein/agents/*.py root@your-server-ip:/opt/ainstein/agents/
+scp /tmp/ainstein/engines/*.py root@your-server-ip:/opt/ainstein/engines/
+scp /tmp/ainstein/tools/*.py root@your-server-ip:/opt/ainstein/tools/
+scp /tmp/ainstein/prompts/*.txt root@your-server-ip:/opt/ainstein/prompts/
 
 systemctl restart ainstein
 ```
@@ -389,7 +389,7 @@ cd /tmp/ainstein/frontend
 npm run build
 
 # 上传 dist
-scp -r /tmp/ainstein/frontend/dist root@8.160.190.64:/opt/ainstein/frontend/
+scp -r /tmp/ainstein/frontend/dist root@your-server-ip:/opt/ainstein/frontend/
 
 # 无需重启，Nginx 直接指向 dist/
 ```

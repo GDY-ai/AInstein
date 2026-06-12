@@ -12,7 +12,7 @@
 
 ### 1.2 测试环境
 
-- **服务器**：8.160.190.64
+- **服务器**：your-server-ip
 - **数据库**：SQLite（WAL 模式）
 - **LLM**：DashScope Anthropic API（kimi-k2.6）
 - **数据集**：us-stock-analyzer 导出的 300 行 analysis_results.csv
@@ -364,7 +364,7 @@ result = run_director_daily(7)
 **执行**：
 
 ```bash
-ssh root@8.160.190.64 "cd /opt/ainstein && source venv/bin/activate && set -a && source /etc/ainstein.env && set +a && python3 -c \"...\""
+ssh root@your-server-ip "cd /opt/ainstein && source venv/bin/activate && set -a && source /etc/ainstein.env && set +a && python3 -c \"...\""
 ```
 
 **预期结果**：
