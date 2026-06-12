@@ -36,19 +36,19 @@ export default function Dashboard() {
         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32}}>
           <div>
             <h1 style={{fontSize: 28, color: 'var(--accent2)', marginBottom: 4}}>
-              AInstein
+              爱因思探
             </h1>
-            <p style={{color: 'var(--text2)'}}>AI Deep Research Platform</p>
+            <p style={{color: 'var(--text2)'}}>AI 深度研究平台</p>
           </div>
           <button onClick={() => setShowCreate(true)} style={btnStyle}>
-            + New Project
+            + 新建项目
           </button>
         </div>
 
         <div style={{display: 'flex', gap: 16, marginBottom: 32}}>
-          <StatCard label="Projects" value={projects.length} />
-          <StatCard label="Sessions Completed" value={totalSessions} />
-          <StatCard label="Total Findings" value={totalFindings} />
+          <StatCard label="研究项目" value={projects.length} />
+          <StatCard label="已完成会话" value={totalSessions} />
+          <StatCard label="研究发现" value={totalFindings} />
         </div>
 
         <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: 20}}>
@@ -59,9 +59,9 @@ export default function Dashboard() {
               <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
                 <Badge label={p.domain} color="var(--blue)" />
                 {p.stats && <>
-                  <Badge label={`${p.stats.sessions_completed} sessions`} color="var(--green)" />
-                  <Badge label={`${p.stats.findings_total} findings`} color="var(--yellow)" />
-                  <Badge label={`${p.stats.queue_pending} pending`} color="var(--text2)" />
+                  <Badge label={`${p.stats.sessions_completed} 会话`} color="var(--green)" />
+                  <Badge label={`${p.stats.findings_total} 发现`} color="var(--yellow)" />
+                  <Badge label={`${p.stats.queue_pending} 待研究`} color="var(--text2)" />
                 </>}
               </div>
             </div>
@@ -72,19 +72,19 @@ export default function Dashboard() {
       {showCreate && (
         <div style={overlayStyle} onClick={() => setShowCreate(false)}>
           <div style={modalStyle} onClick={e => e.stopPropagation()}>
-            <h2 style={{marginBottom: 20}}>Create Research Project</h2>
-            <Field label="Project Name">
-              <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} placeholder="e.g. US Stock Momentum" />
+            <h2 style={{marginBottom: 20}}>创建研究项目</h2>
+            <Field label="项目名称">
+              <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} placeholder="例：美股动量因子研究" />
             </Field>
-            <Field label="Research Mission">
-              <textarea value={mission} onChange={e => setMission(e.target.value)} style={{...inputStyle, height: 80}} placeholder="Long-term research goal..." />
+            <Field label="研究使命">
+              <textarea value={mission} onChange={e => setMission(e.target.value)} style={{...inputStyle, height: 80}} placeholder="长期研究目标，例如：发现驱动美股中期回报的核心因子并优化多因子选股策略" />
             </Field>
-            <Field label="Domain">
-              <input value={domain} onChange={e => setDomain(e.target.value)} style={inputStyle} placeholder="e.g. quantitative finance, medical research" />
+            <Field label="研究领域">
+              <input value={domain} onChange={e => setDomain(e.target.value)} style={inputStyle} placeholder="例：量化金融、股票市场、因子投资" />
             </Field>
             <div style={{display: 'flex', gap: 12, marginTop: 20}}>
-              <button onClick={handleCreate} style={btnStyle}>Create</button>
-              <button onClick={() => setShowCreate(false)} style={{...btnStyle, background: 'var(--bg3)'}}>Cancel</button>
+              <button onClick={handleCreate} style={btnStyle}>创建</button>
+              <button onClick={() => setShowCreate(false)} style={{...btnStyle, background: 'var(--bg3)'}}>取消</button>
             </div>
           </div>
         </div>

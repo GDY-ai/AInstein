@@ -2,6 +2,7 @@
 import logging
 from tools import stats as stats_tools
 from tools.data_access import load_dataset
+from tools import web_data
 
 logger = logging.getLogger(__name__)
 
@@ -132,4 +133,48 @@ register_tool('group_stats', stats_tools.group_stats, _build_schema(
         'group_col': {'type': 'string', 'description': 'Grouping column'},
     },
     ['dataset', 'value_col', 'group_col'],
+))
+
+# --- Web data tools ---
+
+register_tool('web_search', web_data.web_search, _build_schema(
+    'web_search',
+    'Search the web for information. Returns titles, URLs, and snippets.',
+    {
+        'query': {'type': 'string', 'description': 'Search query'},
+        'num_results': {'type': 'integer', 'description': 'Number of results (default 10)'},
+    },
+    ['query'],
+))
+
+register_tool('wikipedia_search', web_data.wikipedia_search, _build_schema(
+    'wikipedia_search',
+    'Search Wikipedia for article summaries. Supports multiple languages.',
+    {
+        'query': {'type': 'string', 'description': 'Search query'},
+        'lang': {'type': 'string', 'description': 'Language code (en, zh, etc., default en)'},
+        'limit': {'type': 'integer', 'description': 'Max results (default 5)'},
+    },
+    ['query'],
+))
+
+register_tool('arxiv_search', web_data.arxiv_search, _build_schema(
+    'arxiv_search',
+    'Search arXiv for academic papers. Returns titles, authors, abstracts.',
+    {
+        'query': {'type': 'string', 'description': 'Search query'},
+        'max_results': {'type': 'integer', 'description': 'Max results (default 10)'},
+    },
+    ['query'],
+))
+
+register_tool('google_trends', web_data.google_trends, _build_schema(
+    'google_trends',
+    'Fetch Google Trends data: interest over time, trend direction, related queries.',
+    {
+        'query': {'type': 'string', 'description': 'Keyword or list of keywords (max 5)'},
+        'geo': {'type': 'string', 'description': 'Geography code (e.g. US, CN, default worldwide)'},
+        'timeframe': {'type': 'string', 'description': "Time range (default 'today 5-y')"},
+    },
+    ['query'],
 ))
