@@ -4,8 +4,8 @@ import json
 import time
 import logging
 from engines.base import ResearchEngine, SessionResult
-from agents.llm_client import call_llm, call_llm_with_tools, extract_json
-from tools.registry import dispatch, get_llm_tool_definitions, get_tool_names
+from agents.llm_client import call_llm, extract_json
+from tools.registry import dispatch, get_tool_names
 from config import RESEARCH_MODEL
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class ThreeRoundEngine(ResearchEngine):
 
         r1_text = call_llm(RESEARCH_MODEL, r1_system, r1_messages, max_tokens=2048, temperature=0.7)
         r1_data = extract_json(r1_text)
-        hypotheses = r1_data.get('hypotheses', []) if r1_data else []
+        hypotheses = r1_data.get('hypotheses', []) if r1_data and isinstance(r1_data, dict) else []
         result.hypotheses = json.dumps(hypotheses, ensure_ascii=False)
 
         if not hypotheses:
@@ -76,56 +76,62 @@ class ThreeRoundEngine(ResearchEngine):
 
         # === Round 2: Tool-based testing ===
         logger.info(f"[R2] Testing {len(hypotheses)} hypotheses with tools")
+        tool_names = get_tool_names()
         r2_system = system_base + (
-            "\n\nYou are in ROUND 2: HYPOTHESIS TESTING.\n"
-            "Use the available statistical tools to test each hypothesis. "
-            "Call tools one at a time. After each tool result, decide next steps.\n"
-            f"Available datasets: {ctx.datasets_summary}\n"
-            f"Hypotheses to test:\n{json.dumps(hypotheses, ensure_ascii=False)}"
+            "\n\n你正在第二轮：假设检验。\n"
+            "使用可用的统计工具检验每个假设。\n"
+            "【重要】每次回复只输出一个纯 JSON 对象，不要输出任何其他文字。\n"
+            "调用工具时输出：\n"
+            '{"tool_call": {"tool": "工具名", "params": {"dataset": "文件名", "参数名": "值"}}}\n'
+            "完成所有检验后输出：\n"
+            '{"done": true, "summary": "检验结果概要"}\n'
+            f"可用工具：{', '.join(tool_names)}\n"
+            f"可用数据集：{ctx.datasets_summary}\n"
+            f"待检验假设：\n{json.dumps(hypotheses, ensure_ascii=False)}"
         )
 
         r2_messages = [{
             'role': 'user',
             'content': (
-                f"Test the hypotheses using data tools. "
-                f"Available datasets: {ctx.datasets_summary}. "
-                "Start by running descriptive_stats to understand the data, then test each hypothesis."
+                "请用数据工具检验假设。"
+                f"可用数据集：{ctx.datasets_summary}。"
+                "先运行 descriptive_stats 了解数据。只输出 JSON，不要输出其他文字。"
             )
         }]
 
-        tool_defs = get_llm_tool_definitions()
         test_results = []
         max_tool_rounds = 12
 
         for i in range(max_tool_rounds):
-            text, tool_calls, resp = call_llm_with_tools(
-                RESEARCH_MODEL, r2_system, r2_messages, tool_defs,
-                max_tokens=2048, temperature=0.3,
-            )
+            r2_text = call_llm(RESEARCH_MODEL, r2_system, r2_messages, max_tokens=2048, temperature=0.3)
+            r2_data = extract_json(r2_text)
 
-            if not tool_calls:
-                if text:
-                    test_results.append({'summary': text})
+            if not r2_data or not isinstance(r2_data, dict):
+                test_results.append({'summary': r2_text[:500]})
                 break
 
+            if r2_data.get('done'):
+                test_results.append({'summary': r2_data.get('summary', 'done')})
+                break
+
+            tc = r2_data.get('tool_call', {})
+            tool_name = tc.get('tool', '')
+            tool_params = tc.get('params', {})
+
+            if not tool_name:
+                test_results.append({'summary': r2_text[:500]})
+                break
+
+            logger.info(f"  Tool call: {tool_name}({json.dumps(tool_params, ensure_ascii=False)[:100]})")
+            tool_result = dispatch(tool_name, dict(tool_params),
+                                   project_id=ctx.project_id, datasets=None)
+            test_results.append({'tool': tool_name, 'params': tool_params, 'result': tool_result})
+
+            r2_messages.append({'role': 'assistant', 'content': r2_text})
             r2_messages.append({
-                'role': 'assistant',
-                'content': resp.content,
+                'role': 'user',
+                'content': f"工具 {tool_name} 返回结果：\n{json.dumps(tool_result, ensure_ascii=False, default=str)[:2000]}\n\n请继续下一步。"
             })
-
-            tool_results = []
-            for tc in tool_calls:
-                logger.info(f"  Tool call: {tc['name']}({json.dumps(tc['input'], ensure_ascii=False)[:100]})")
-                tool_result = dispatch(tc['name'], dict(tc['input']),
-                                       project_id=ctx.project_id, datasets=None)
-                test_results.append({'tool': tc['name'], 'params': tc['input'], 'result': tool_result})
-                tool_results.append({
-                    'type': 'tool_result',
-                    'tool_use_id': tc['id'],
-                    'content': json.dumps(tool_result, ensure_ascii=False, default=str),
-                })
-
-            r2_messages.append({'role': 'user', 'content': tool_results})
 
         result.verification = json.dumps(test_results, ensure_ascii=False, default=str)
 
@@ -154,7 +160,7 @@ class ThreeRoundEngine(ResearchEngine):
         r3_text = call_llm(RESEARCH_MODEL, r3_system, r3_messages, max_tokens=3000, temperature=0.5)
         r3_data = extract_json(r3_text)
 
-        if r3_data:
+        if r3_data and isinstance(r3_data, dict):
             result.findings = r3_data.get('findings', [])
             result.next_directions = r3_data.get('next_directions', [])
             result.data_summary = r3_data.get('data_summary', '')

@@ -11,44 +11,40 @@ HEADERS = {
 
 
 def web_search(query, num_results=10):
-    """Search the web via DuckDuckGo HTML (no API key needed, accessible from US server)."""
+    """Search the web via DuckDuckGo Instant Answer API + Wikipedia fallback."""
     try:
-        url = f'https://html.duckduckgo.com/html/?q={quote(query)}'
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        if resp.status_code != 200:
-            return {'error': f'HTTP {resp.status_code}'}
-        # Parse HTML for result snippets
-        from html.parser import HTMLParser
-        class ResultParser(HTMLParser):
-            def __init__(self):
-                super().__init__()
-                self.results = []
-                self.in_result = False
-                self.current = {}
-            def handle_starttag(self, tag, attrs):
-                attrs_dict = dict(attrs)
-                if tag == 'a' and 'result__a' in attrs_dict.get('class', ''):
-                    self.in_result = True
-                    self.current = {'title': '', 'url': attrs_dict.get('href', '')}
-                if tag == 'a' and 'result__snippet' in attrs_dict.get('class', ''):
-                    self.current['snippet'] = ''
-                    self._in_snippet = True
-            def handle_data(self, data):
-                if self.in_result:
-                    self.current['title'] += data
-                if getattr(self, '_in_snippet', False):
-                    self.current['snippet'] = self.current.get('snippet', '') + data
-            def handle_endtag(self, tag):
-                if tag == 'a' and self.in_result:
-                    self.in_result = False
-                    if self.current.get('title'):
-                        self.results.append(self.current)
-                if tag == 'a':
-                    self._in_snippet = False
-        parser = ResultParser()
-        parser.feed(resp.text)
-        results = parser.results[:num_results]
-        return {'query': query, 'count': len(results), 'results': results}
+        results = []
+        # DuckDuckGo Instant Answer API (structured, no HTML parsing needed)
+        url = 'https://api.duckduckgo.com/'
+        params = {'q': query, 'format': 'json', 'no_html': 1, 'skip_disambig': 1}
+        resp = requests.get(url, params=params, headers=HEADERS, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get('AbstractText'):
+                results.append({
+                    'title': data.get('Heading', query),
+                    'url': data.get('AbstractURL', ''),
+                    'snippet': data['AbstractText'],
+                    'source': data.get('AbstractSource', ''),
+                })
+            for topic in data.get('RelatedTopics', [])[:num_results]:
+                if isinstance(topic, dict) and 'Text' in topic:
+                    results.append({
+                        'title': topic.get('Text', '')[:80],
+                        'url': topic.get('FirstURL', ''),
+                        'snippet': topic.get('Text', ''),
+                    })
+        # Also search Wikipedia as supplementary source
+        wiki_results = wikipedia_search(query, lang='en', limit=3)
+        if 'results' in wiki_results:
+            for wr in wiki_results['results']:
+                results.append({
+                    'title': wr['title'],
+                    'url': wr['url'],
+                    'snippet': wr['summary'][:200],
+                    'source': 'Wikipedia',
+                })
+        return {'query': query, 'count': len(results), 'results': results[:num_results]}
     except Exception as e:
         logger.error(f"web_search failed: {e}")
         return {'error': str(e)}
@@ -92,8 +88,9 @@ def arxiv_search(query, max_results=10):
     """Search arXiv for academic papers."""
     try:
         url = 'http://export.arxiv.org/api/query'
+        search_q = f'all:"{query}"' if ' ' in query else f'all:{query}'
         params = {
-            'search_query': f'all:{quote(query)}',
+            'search_query': search_q,
             'start': 0,
             'max_results': max_results,
             'sortBy': 'relevance',
