@@ -394,7 +394,13 @@ def get_knowledge_graph(
                 "created_at": r.get("created_at"),
             })
 
-    return {"nodes": nodes, "edges": edges}
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        # 数据库真实总量（不受 limit 截断影响），供前端顶部统计展示
+        "total_nodes": db.count_cognitive_elements(brain_id),
+        "total_edges": db.count_cognitive_relations(brain_id),
+    }
 
 
 # ============================================================

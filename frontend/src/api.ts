@@ -167,6 +167,8 @@ export const api = {
         relation_type: e.relation_type || e.relation || 'relates_to',
         weight: e.weight ?? e.strength ?? 0.5,
       })),
+      total_nodes: typeof raw.total_nodes === 'number' ? raw.total_nodes : undefined,
+      total_edges: typeof raw.total_edges === 'number' ? raw.total_edges : undefined,
     };
   },
   getBrainFrontier: (brainId: number, params?: {limit?: number; confidence_ceiling?: number}): Promise<BrainFrontier> => {

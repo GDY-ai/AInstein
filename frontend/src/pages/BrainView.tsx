@@ -565,7 +565,23 @@ export default function BrainView() {
               <span style={pulseDot} title="实时同步中" />
             </div>
             <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>
-              {graph.nodes.length} 个认知元素 · {graph.edges.length} 条关系 · 上次同步 {lastUpdate.toLocaleTimeString()}
+              {(() => {
+                const totalN = graph.total_nodes
+                const totalE = graph.total_edges
+                const loadedN = graph.nodes.length
+                const loadedE = graph.edges.length
+                const nodeText = typeof totalN === 'number'
+                  ? (totalN > loadedN
+                      ? `${totalN} 个认知元素（已加载 ${loadedN}）`
+                      : `${totalN} 个认知元素`)
+                  : `${loadedN} 个认知元素`
+                const edgeText = typeof totalE === 'number'
+                  ? (totalE > loadedE
+                      ? `${totalE} 条关系（已加载 ${loadedE}）`
+                      : `${totalE} 条关系`)
+                  : `${loadedE} 条关系`
+                return `${nodeText} · ${edgeText} · 上次同步 ${lastUpdate.toLocaleTimeString()}`
+              })()}
             </div>
           </div>
         </div>

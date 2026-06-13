@@ -624,6 +624,31 @@ def get_cognitive_element(ce_id):
         row = conn.execute("SELECT * FROM cognitive_elements WHERE id=?", (ce_id,)).fetchone()
         return dict(row) if row else None
 
+def count_cognitive_elements(brain_id, type=None, status=None):
+    """统计某大脑下认知元素总数（不受 limit 截断影响），用于前端展示真实总量。"""
+    with get_db() as conn:
+        q = "SELECT COUNT(*) AS c FROM cognitive_elements WHERE brain_id=?"
+        params = [brain_id]
+        if type:
+            q += " AND type=?"
+            params.append(type)
+        if status:
+            q += " AND status=?"
+            params.append(status)
+        row = conn.execute(q, params).fetchone()
+        return int(row["c"] if row else 0)
+
+
+def count_cognitive_relations(brain_id):
+    """统计某大脑下认知关系总数。"""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM cognitive_relations WHERE brain_id=?",
+            (brain_id,),
+        ).fetchone()
+        return int(row["c"] if row else 0)
+
+
 def get_cognitive_elements(brain_id, type=None, status=None, limit=200):
     with get_db() as conn:
         q = "SELECT * FROM cognitive_elements WHERE brain_id=?"

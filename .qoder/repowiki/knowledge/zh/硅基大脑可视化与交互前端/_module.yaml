@@ -1,9 +1,8 @@
 schema_version: 1
 module_path: frontend
-title: 硅基大脑可视化与认知图谱交互
+title: 硅基大脑可视化与交互前端
 scope:
     - frontend/
 source_files: []
 depends_on: []
-related_to:
-    - path: backend
+related_to: []

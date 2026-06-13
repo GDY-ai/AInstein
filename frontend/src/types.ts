@@ -154,6 +154,10 @@ export interface CognitiveEdge {
 export interface KnowledgeGraph {
   nodes: CognitiveNode[];
   edges: CognitiveEdge[];
+  /** 数据库中认知元素总数（不受 limit 截断影响） */
+  total_nodes?: number;
+  /** 数据库中认知关系总数 */
+  total_edges?: number;
 }
 
 export interface BrainFrontier {

@@ -2,7 +2,7 @@
 schema_version: 1
 locale: zh-CN
 branch: master
-exported_at: "2026-06-13T05:33:43Z"
+exported_at: "2026-06-13T05:59:15Z"
 modules:
     "":
         dir_name: 硅基大脑多智能体协作系统
@@ -51,12 +51,11 @@ modules:
         related_to:
             - path: backend/agents
     frontend:
-        dir_name: 硅基大脑可视化与认知图谱交互
-        title: 硅基大脑可视化与认知图谱交互
+        dir_name: 硅基大脑可视化与交互前端
+        title: 硅基大脑可视化与交互前端
         scope:
             - frontend/
         source_files: []
         children: []
         depends_on: []
-        related_to:
-            - path: backend
+        related_to: []

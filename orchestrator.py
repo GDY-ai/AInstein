@@ -98,6 +98,36 @@ _FALLBACK_CE_COUNT: int = 500
 #: 双轨终止策略·兜底轨：当大脑运行时长（秒）达到此阈值时，强制派遣 synthesizer 总结
 _FALLBACK_DURATION_SECONDS: float = 3600.0
 
+# ─── 收敛压力参数（解决"无限发散、结构松散"问题） ───
+#: 监控窗口：最近 N 个 CE 用于探索/收敛比统计
+_CONVERGENCE_PRESSURE_WINDOW: int = 20
+#: 探索/收敛比阈值，超过则触发收敛模式
+_EXPLORATION_CONSOLIDATION_RATIO: float = 5.0
+#: 问题链最大深度（暂作为 open question 占比的辅助参考，实际通过占比控制）
+_MAX_QUESTION_DEPTH: int = 3
+#: 每产出 N 个 CE 强制一次综合轮
+_FORCED_SYNTHESIS_INTERVAL: int = 20
+#: 收敛模式下优先派遣的角色顺序（reasoner > synthesizer > critic）
+_CONVERGENCE_MODE_ROLES: List[str] = ["reasoner", "synthesizer", "critic"]
+#: 探索类 CE 类型（增加新认知材料）
+_EXPLORATION_TYPES: set = {
+    "observation",
+    "question",
+    "hypothesis",
+    "evidence",
+    "counter_evidence",
+}
+#: 收敛类 CE 类型（整合现有材料）
+_CONSOLIDATION_TYPES: set = {
+    "inference",
+    "argument",
+    "conclusion",
+    "consensus",
+    "insight",
+}
+#: open question 占比上限 —— 超过则禁止再产出新 question
+_MAX_OPEN_QUESTION_RATIO: float = 0.3
+
 
 # ============================================================
 # 大脑运行时状态
@@ -136,6 +166,8 @@ class BrainState:
     last_role_dispatch: Dict[str, float] = field(default_factory=dict)
     # 双轨终止策略·兜底轨：是否已经触发过强制 synthesizer 总结（避免重复触发）
     fallback_triggered: bool = False
+    # 收敛压力·强制综合轮：上一次触发综合脉冲时的 CE 总数（避免短时间内重复触发）
+    last_forced_synthesis_total_ce: int = 0
 
 
 # ============================================================
@@ -575,15 +607,48 @@ class ATAOrchestrator:
                 logger.exception("事件分派失败 brain=%s event=%s",
                                  brain_id, event.get("type"))
 
-        # 2) 若无事件，去 frontier 找一个低置信度问题让 explorer/critic 思考
+        # 1.5) 收敛压力检查：决定本轮调度倾向（explore / converge / force_synthesis）
+        try:
+            pressure_mode = self._check_convergence_pressure(brain_id)
+        except Exception:
+            logger.exception("[convergence-pressure] 检查失败 brain=%s", brain_id)
+            pressure_mode = "explore"
+
+        # 问题链/open question 占比超限 → 强制收敛
+        if pressure_mode == "explore":
+            try:
+                if not self._check_question_depth(brain_id, "question"):
+                    logger.info(
+                        "[convergence-pressure] brain=%s open question 占比过高，"
+                        "升级为 converge 模式", brain_id,
+                    )
+                    pressure_mode = "converge"
+            except Exception:
+                logger.exception(
+                    "[convergence-pressure] question 深度检查失败 brain=%s", brain_id,
+                )
+
+        # 2) force_synthesis：插入一次综合脉冲（不影响后续 frontier 探索决策）
+        if pressure_mode == "force_synthesis":
+            try:
+                if self._force_synthesis_pulse(brain_id):
+                    activity = True
+            except Exception:
+                logger.exception(
+                    "[convergence-pressure] 强制综合脉冲失败 brain=%s", brain_id,
+                )
+
+        # 3) 若无事件，去 frontier 找一个低置信度问题让 explorer/critic 思考
+        #    收敛模式下：派遣 reasoner/synthesizer 进行整合而非探索
         if not events_to_process:
             try:
-                if self._explore_frontier(brain_id):
+                convergence_mode = pressure_mode in ("converge", "force_synthesis")
+                if self._explore_frontier(brain_id, convergence_mode=convergence_mode):
                     activity = True
             except Exception:
                 logger.exception("frontier 探索失败 brain=%s", brain_id)
 
-        # 3) 矛盾扫描 → 自动博弈
+        # 4) 矛盾扫描 → 自动博弈
         try:
             if self._scan_and_trigger_deliberation(brain_id):
                 activity = True
@@ -920,14 +985,223 @@ class ATAOrchestrator:
         return random.choice(same_role)
 
     # ============================================================
+    # 收敛压力机制（避免大脑无限发散、结构松散）
+    # ============================================================
+    def _check_convergence_pressure(self, brain_id: int) -> str:
+        """检查当前思维状态，返回本轮调度模式。
+
+        返回值：
+            - ``'explore'``         — 正常探索模式（默认）
+            - ``'converge'``        — 收敛模式：优先派遣 reasoner / synthesizer
+            - ``'force_synthesis'`` — 强制插入一次综合脉冲
+
+        判定顺序：
+            1. 最近 N 个 CE 不足窗口大小 → 数据不够，继续 explore
+            2. 距上一次 conclusion/consensus/inference 已积累 ≥ 间隔阈值
+               → force_synthesis
+            3. 探索类 / 收敛类 CE 比例失衡 (> _EXPLORATION_CONSOLIDATION_RATIO)
+               → converge
+            4. 否则 explore
+        """
+        try:
+            with _db.get_db() as conn:
+                recent = conn.execute(
+                    "SELECT type FROM cognitive_elements "
+                    "WHERE brain_id = ? "
+                    "ORDER BY created_at DESC, id DESC "
+                    "LIMIT ?",
+                    (brain_id, _CONVERGENCE_PRESSURE_WINDOW),
+                ).fetchall()
+
+                if len(recent) < _CONVERGENCE_PRESSURE_WINDOW:
+                    return "explore"  # 样本不足，保持探索
+
+                total_ce_row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM cognitive_elements WHERE brain_id = ?",
+                    (brain_id,),
+                ).fetchone()
+                total_ce = int(total_ce_row["c"]) if total_ce_row else 0
+
+                last_synth_row = conn.execute(
+                    "SELECT MAX(id) AS m FROM cognitive_elements "
+                    "WHERE brain_id = ? "
+                    "AND type IN ('conclusion', 'consensus', 'inference')",
+                    (brain_id,),
+                ).fetchone()
+                last_synthesis_ce_id = (
+                    int(last_synth_row["m"])
+                    if last_synth_row and last_synth_row["m"] is not None
+                    else 0
+                )
+        except Exception:
+            logger.exception(
+                "[convergence-pressure] 查询 CE 统计失败 brain=%s", brain_id,
+            )
+            return "explore"
+
+        # 强制综合间隔检查（用 BrainState 里 last_forced_synthesis_total_ce 节流，
+        # 避免在 LLM 回填 conclusion 之前重复触发综合脉冲）
+        state = self.brains.get(brain_id)
+        last_pulse_total = state.last_forced_synthesis_total_ce if state else 0
+        ces_since_last_synthesis = total_ce - last_synthesis_ce_id
+        ces_since_last_pulse = total_ce - last_pulse_total
+        if (
+            ces_since_last_synthesis >= _FORCED_SYNTHESIS_INTERVAL
+            and ces_since_last_pulse >= _FORCED_SYNTHESIS_INTERVAL
+        ):
+            logger.info(
+                "[convergence-pressure] brain=%s force_synthesis "
+                "(total_ce=%d, since_last_synth=%d, since_last_pulse=%d)",
+                brain_id, total_ce, ces_since_last_synthesis, ces_since_last_pulse,
+            )
+            return "force_synthesis"
+
+        # 比例检查
+        explore_count = sum(1 for r in recent if r["type"] in _EXPLORATION_TYPES)
+        consolidate_count = sum(
+            1 for r in recent if r["type"] in _CONSOLIDATION_TYPES
+        )
+        ratio = explore_count / max(consolidate_count, 1)
+        if ratio > _EXPLORATION_CONSOLIDATION_RATIO:
+            logger.info(
+                "[convergence-pressure] brain=%s converge "
+                "(explore=%d / consolidate=%d, ratio=%.2f > %.2f)",
+                brain_id, explore_count, consolidate_count,
+                ratio, _EXPLORATION_CONSOLIDATION_RATIO,
+            )
+            return "converge"
+
+        return "explore"
+
+    def _check_question_depth(self, brain_id: int, new_ce_type: str) -> bool:
+        """检查是否允许产出新的 question 类型 CE。
+
+        简化实现：不通过 relations 追溯实际链长（开销较大），而是用
+        ``open question 占比`` 作为代理指标。当 open question 数量超过
+        总 CE 的 :data:`_MAX_OPEN_QUESTION_RATIO` 时，认为问题已经
+        发散过头，应转向整合。
+
+        :param new_ce_type: 即将产出的 CE 类型，仅当其为 ``'question'`` 时才检查。
+        :return: True = 允许；False = 拒绝（应改为整合）。
+        """
+        if new_ce_type != "question":
+            return True
+
+        try:
+            with _db.get_db() as conn:
+                open_q_row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM cognitive_elements "
+                    "WHERE brain_id = ? AND type = 'question' AND status = 'open'",
+                    (brain_id,),
+                ).fetchone()
+                total_row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM cognitive_elements WHERE brain_id = ?",
+                    (brain_id,),
+                ).fetchone()
+        except Exception:
+            logger.exception(
+                "[convergence-pressure] question 深度查询失败 brain=%s", brain_id,
+            )
+            return True  # 查询失败时不拦截，保持原行为
+
+        open_questions = int(open_q_row["c"]) if open_q_row else 0
+        total_ce = int(total_row["c"]) if total_row else 0
+        if total_ce <= 0:
+            return True
+
+        if open_questions > total_ce * _MAX_OPEN_QUESTION_RATIO:
+            logger.debug(
+                "[convergence-pressure] brain=%s open_questions=%d / total=%d "
+                "超过上限 %.2f，拒绝继续提问",
+                brain_id, open_questions, total_ce, _MAX_OPEN_QUESTION_RATIO,
+            )
+            return False
+        return True
+
+    def _force_synthesis_pulse(self, brain_id: int) -> bool:
+        """强制派遣一次 synthesizer 进行综合性整合（不终止思考）。
+
+        与 :meth:`_force_synthesizer_conclusion` 区别：
+            - 后者是 *双轨终止·兜底轨* 的一次性最终总结，会标记
+              ``fallback_triggered`` 永久不再重复；
+            - 本方法是周期性的"综合脉冲"，每 :data:`_FORCED_SYNTHESIS_INTERVAL`
+              个 CE 触发一次，目的是**打破发散**并形成中间推论 / 结论。
+
+        :return: 是否成功派遣了 synthesizer。
+        """
+        state = self.brains.get(brain_id)
+        if state is None:
+            return False
+
+        synthesizer = self._pick_or_spawn(brain_id, _CONVERGENCE_ROLE_KEY)
+        if synthesizer is None:
+            logger.warning(
+                "[convergence-pressure] brain=%s 无可用 synthesizer，跳过综合脉冲",
+                brain_id,
+            )
+            return False
+
+        # 记录本次脉冲时的 total_ce，以节流下次触发
+        try:
+            with _db.get_db() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM cognitive_elements WHERE brain_id = ?",
+                    (brain_id,),
+                ).fetchone()
+                total_ce = int(row["c"]) if row else 0
+        except Exception:
+            total_ce = 0
+
+        with state.state_lock:
+            state.last_forced_synthesis_total_ce = total_ce
+
+        pseudo_event: Dict[str, Any] = {
+            "event_id": f"convergence-pulse-{brain_id}-{int(time.time())}",
+            "type": "SYNTHESIS_REQUIRED",
+            "brain_id": brain_id,
+            "payload": {
+                "reason": "forced_synthesis_interval",
+                "instruction": (
+                    "请基于现有认知元素，整合并提炼一个推论(inference)、"
+                    "论证(argument)或阶段性结论(conclusion)，"
+                    "而不是继续提出新的问题或假设。"
+                ),
+            },
+            "source_agent_id": None,
+        }
+
+        logger.info(
+            "[convergence-pressure] brain=%s 综合脉冲 -> synthesizer[%s] "
+            "(total_ce=%d)",
+            brain_id, synthesizer.instance_id, total_ce,
+        )
+        try:
+            synthesizer.react_to_event(pseudo_event)
+            with state.state_lock:
+                state.last_role_dispatch[synthesizer.role_name] = time.time()
+                state.last_activity = time.time()
+            return True
+        except Exception:
+            logger.exception(
+                "[convergence-pressure] synthesizer.react_to_event 失败 instance=%s",
+                synthesizer.instance_id,
+            )
+            return False
+
+    # ============================================================
     # 认知边界探索（无事件时的"自驱思考"）
     # ============================================================
-    def _explore_frontier(self, brain_id: int) -> bool:
-        """空闲时让 explorer 选一个边界问题主动思考。
+    def _explore_frontier(
+        self,
+        brain_id: int,
+        convergence_mode: bool = False,
+    ) -> bool:
+        """空闲时让合适的 Agent 选一个边界问题主动思考。
 
-        - 取 frontier 候选并随机抽一个；
-        - 把它包装成一个伪事件交给 explorer.react_to_event。
-        - 若大脑还很空（无任何 CE），直接让 explorer 自由发挥。
+        :param convergence_mode: 是否处于收敛模式。
+            - False（默认）：派遣 explorer 进行发散性探索
+            - True：按 :data:`_CONVERGENCE_MODE_ROLES` 顺序优先派遣
+              reasoner / synthesizer / critic，prompt 改为"整合现有认知元素"
         """
         try:
             frontier = cognitive.get_frontier(brain_id, limit=10)
@@ -938,16 +1212,61 @@ class ATAOrchestrator:
         elements = frontier.get("elements") or []
         target_ce = random.choice(elements) if elements else None
 
-        # 选 explorer，没有就 spawn
-        explorer = self._pick_or_spawn(brain_id, "explorer")
-        if explorer is None:
+        # 角色选择
+        if convergence_mode:
+            agent = None
+            for role_name in _CONVERGENCE_MODE_ROLES:
+                agent = self._pick_or_spawn(brain_id, role_name)
+                if agent is not None:
+                    break
+            if agent is None:
+                logger.info(
+                    "[convergence-pressure] brain=%s 无可用收敛角色，回退 explorer",
+                    brain_id,
+                )
+                agent = self._pick_or_spawn(brain_id, "explorer")
+        else:
+            agent = self._pick_or_spawn(brain_id, "explorer")
+
+        if agent is None:
             return False
 
         # 构造伪事件供 react_to_event 使用
         # 注：framework._build_context_from_event 会从 brains 表读取 seed_question
         # 作为研究课题（research_topic），所以这里 payload 不必（也不应）携带
         # "种子问题 / frontier" 这类系统术语字样，避免 LLM 把它们当作思考对象。
-        if target_ce:
+        if convergence_mode:
+            instruction = (
+                "请整合现有认知元素，提炼推论(inference)、"
+                "构造论证(argument)或形成阶段性结论(conclusion)，"
+                "不要产出新的问题或假设。"
+            )
+            if target_ce:
+                pseudo_event = {
+                    "event_id": f"converge-{brain_id}-{int(time.time())}",
+                    "type": EventTypes.CE_HYPOTHESIS_SATURATED,
+                    "brain_id": brain_id,
+                    "payload": {
+                        "ce_id": target_ce.get("id"),
+                        "type": target_ce.get("type"),
+                        "title": (target_ce.get("payload") or {}).get("title", ""),
+                        "instruction": instruction,
+                        "convergence_mode": True,
+                    },
+                    "source_agent_id": None,
+                }
+            else:
+                pseudo_event = {
+                    "event_id": f"converge-seed-{brain_id}-{int(time.time())}",
+                    "type": EventTypes.CE_HYPOTHESIS_SATURATED,
+                    "brain_id": brain_id,
+                    "payload": {
+                        "instruction": instruction,
+                        "convergence_mode": True,
+                    },
+                    "source_agent_id": None,
+                }
+        elif target_ce:
             pseudo_event = {
                 "event_id": f"frontier-{brain_id}-{int(time.time())}",
                 "type": EventTypes.CE_QUESTION_RAISED,
@@ -971,19 +1290,28 @@ class ATAOrchestrator:
                 "source_agent_id": None,
             }
 
-        logger.info("brain=%s frontier 探索 -> explorer[%s] target_ce=%s",
-                    brain_id, explorer.instance_id,
-                    (target_ce or {}).get("id"))
+        if convergence_mode:
+            logger.info(
+                "[convergence-pressure] brain=%s 收敛探索 -> %s[%s] target_ce=%s",
+                brain_id, agent.role_name, agent.instance_id,
+                (target_ce or {}).get("id"),
+            )
+        else:
+            logger.info(
+                "brain=%s frontier 探索 -> %s[%s] target_ce=%s",
+                brain_id, agent.role_name, agent.instance_id,
+                (target_ce or {}).get("id"),
+            )
         try:
-            explorer.react_to_event(pseudo_event)
+            agent.react_to_event(pseudo_event)
             state = self.brains.get(brain_id)
             if state:
                 with state.state_lock:
-                    state.last_role_dispatch[explorer.role_name] = time.time()
+                    state.last_role_dispatch[agent.role_name] = time.time()
             return True
         except Exception:
-            logger.exception("explorer.react_to_event 失败 instance=%s",
-                             explorer.instance_id)
+            logger.exception("%s.react_to_event 失败 instance=%s",
+                             agent.role_name, agent.instance_id)
             return False
 
     def _pick_or_spawn(self, brain_id: int, role_name: str) -> Optional[BaseAgent]:
