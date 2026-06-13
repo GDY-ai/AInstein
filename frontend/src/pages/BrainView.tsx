@@ -193,12 +193,19 @@ export default function BrainView() {
     merged.forEach(n => newMap.set(n.id, n))
     nodeMapRef.current = newMap
 
-    // 识别种子节点：ce_type === 'question' 且 created_at 最早
+    // 识别种子节点：ce_type === 'question' 且 created_at 最早；
+    // 当多个 question 的 created_at 完全相同（并列最早）时，用 id 最小作为 tiebreaker，
+    // 保证全局唯一种子，避免出现"两个发光点"的视觉假象。
     let seedId: number | null = null
     let seedEarliest: string | undefined
     for (const n of merged) {
       if (n.ce_type !== 'question') continue
-      if (seedEarliest === undefined || (n.created_at && n.created_at < seedEarliest)) {
+      if (!n.created_at) continue
+      if (
+        seedEarliest === undefined ||
+        n.created_at < seedEarliest ||
+        (n.created_at === seedEarliest && seedId !== null && n.id < seedId)
+      ) {
         seedId = n.id
         seedEarliest = n.created_at
       }
@@ -364,6 +371,21 @@ export default function BrainView() {
         },
         exit => exit.transition().duration(400).attr('opacity', 0).remove(),
       )
+
+    // 兜底：每次渲染统一同步所有节点的 seed class，避免 enter/update 分支
+    // 在某些边缘情况（如 simulation 重启、节点合并）下遗留旧种子标记导致出现多个发光点。
+    gRoot
+      .select<SVGGElement>('g.nodes')
+      .selectAll<SVGGElement, GraphNode>('g.node')
+      .classed('seed', d => d.id === seedId)
+    gRoot
+      .select<SVGGElement>('g.nodes')
+      .selectAll<SVGCircleElement, GraphNode>('circle.core, circle.seed-core')
+      .attr('class', d => 'core' + (d.id === seedId ? ' seed-core' : ''))
+    gRoot
+      .select<SVGGElement>('g.nodes')
+      .selectAll<SVGCircleElement, GraphNode>('circle.halo, circle.seed-halo')
+      .attr('class', d => 'halo' + (d.id === seedId ? ' seed-halo' : ''))
 
     // 拖拽
     const drag = d3
