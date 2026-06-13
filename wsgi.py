@@ -76,6 +76,46 @@ db.init_db()
 if acquire_scheduler_lock():
     start_scheduler()
     logger.info("This worker owns the scheduler lock")
+
+    # === 观察员事件订阅 ===
+    try:
+        import observer as _observer
+        _observer.register_observer_handlers()
+        logger.info("Observer handlers registered")
+    except Exception:
+        logger.exception("register_observer_handlers failed")
+
+    # === ATA 编排器初始化（订阅事件 + 注册角色）===
+    try:
+        from orchestrator import ATAOrchestrator
+        _ata = ATAOrchestrator.instance()
+        logger.info("ATAOrchestrator initialized, handlers: %s", _ata.event_bus.list_handlers())
+    except Exception:
+        logger.exception("ATAOrchestrator init failed")
+        _ata = None
+
+    # === 恢复已有活跃大脑的思考循环 ===
+    def _resume_active_brains():
+        """应用启动时恢复所有 active/thinking 状态的大脑。"""
+        if _ata is None:
+            return
+        try:
+            with db.get_db() as conn:
+                rows = conn.execute(
+                    "SELECT id FROM brains WHERE state IN ('active', 'thinking')"
+                ).fetchall()
+            for row in rows:
+                brain_id = row['id'] if isinstance(row, dict) else row[0]
+                try:
+                    started = _ata.start_brain(brain_id)
+                    logger.info("Resume brain %s: %s", brain_id, "started" if started else "already running")
+                except Exception as e:
+                    logger.warning("Failed to resume brain %s: %s", brain_id, e)
+        except Exception:
+            logger.exception("_resume_active_brains failed")
+
+    _resume_active_brains()
+
 else:
     logger.info("Another worker owns the scheduler lock")
 
