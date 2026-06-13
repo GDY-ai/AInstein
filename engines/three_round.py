@@ -1,33 +1,170 @@
-"""Three-round research engine: hypothesis → test → verify."""
+"""三轮研究引擎：假设生成 → 工具检验 → 总结结论。
+
+在产出每一轮研究成果时，本引擎会同步把结果写入硅基大脑的认知元素体系
+（``cognitive_elements`` / ``cognitive_relations``），实现新旧表平滑迁移的
+**双写机制**：
+
+- 第一轮（假设生成）→ ``hypothesis`` CE（含 test_plan / expected_columns 元数据）
+- 第二轮（工具验证）→ ``observation`` CE（每次工具调用一条）
+- 第三轮（总结结论）→ ``evidence``/``counter_evidence``、``conclusion``/``inference``、
+  ``question``，并自动建立 supports / refutes / derives_from / inspires 关系。
+
+双写完全在 ``try/except`` 内进行：失败仅记日志，绝不影响旧表写入与原研究流程。
+"""
 import os
 import json
 import time
 import logging
+from typing import Any, Dict, List, Optional
+
 from engines.base import ResearchEngine, SessionResult
 from agents.llm_client import call_llm, extract_json
 from tools.registry import dispatch, get_tool_names
 from config import RESEARCH_MODEL
+
+import cognitive  # 认知元素业务层（蓝图 §1.1 / §2.4）
 
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'prompts')
 
 
-def _load_prompt(name):
+# ============================================================
+# 置信度映射常量（蓝图 §1.1.5 + 任务 #4 设计决策）
+# ============================================================
+
+# 假设初始置信度：纯推理产物，置信度区间 30-50
+_CONF_HYPOTHESIS_INIT: float = 0.4
+# 观察 / 数据：来自工具调用，置信度区间 80-90
+_CONF_OBSERVATION: float = 0.85
+# 证据：取决于数据质量，置信度区间 60-80
+_CONF_EVIDENCE: float = 0.7
+_CONF_COUNTER_EVIDENCE: float = 0.7
+# Question（next_directions）：尚未探索，置信度居中
+_CONF_QUESTION: float = 0.5
+
+# finding 自评 confidence 文本 → 数值映射（任务规范：high=80 / medium=50 / low=20）
+_FINDING_CONF_MAP: Dict[str, float] = {
+    'high': 0.8,
+    'medium': 0.5,
+    'low': 0.2,
+}
+# 大于等于该阈值时晋升为 conclusion，否则记为 inference（蓝图 §1.1.2 conclusion 行）
+_CONCLUSION_PROMOTE_THRESHOLD: float = 0.7
+
+
+def _load_prompt(name: str) -> str:
+    """从 prompts/ 目录读取指定提示词模板。"""
     path = os.path.join(PROMPTS_DIR, f'{name}.txt')
     with open(path, 'r') as f:
         return f.read()
 
 
+def _truncate(text: Any, limit: int = 500) -> str:
+    """安全地把任意对象转为字符串并截断长度，避免内容字段过大。"""
+    if text is None:
+        return ''
+    if not isinstance(text, str):
+        try:
+            text = json.dumps(text, ensure_ascii=False, default=str)
+        except Exception:
+            text = str(text)
+    return text if len(text) <= limit else text[:limit] + '…'
+
+
 class ThreeRoundEngine(ResearchEngine):
+    """三轮研究引擎实现，带认知元素双写。"""
 
     @property
-    def engine_type(self):
+    def engine_type(self) -> str:
         return 'three_round'
 
-    def run(self, ctx):
+    # ------------------------------------------------------------
+    # 双写辅助
+    # ------------------------------------------------------------
+
+    def _safe_create_element(
+        self,
+        brain_id: int,
+        ce_type: str,
+        title: str,
+        content: str,
+        confidence: float,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """容错地调用 :func:`cognitive.create_element`，失败仅记日志返回 None。"""
+        try:
+            ce = cognitive.create_element(
+                brain_id=brain_id,
+                ce_type=ce_type,
+                title=title or ce_type,
+                content=content or '',
+                confidence=confidence,
+                metadata_json=metadata or {},
+            )
+            if ce:
+                logger.info(
+                    "[双写] 创建 CE brain=%s type=%s id=%s conf=%.2f",
+                    brain_id, ce_type, ce.get('id'), confidence,
+                )
+            return ce
+        except Exception as e:
+            logger.warning("[双写] 创建 %s 失败: %s", ce_type, e)
+            return None
+
+    def _safe_create_relation(
+        self,
+        source_id: int,
+        target_id: int,
+        relation_type: str,
+        weight: float = 0.5,
+    ) -> None:
+        """容错地建立认知关系，源/目标缺失时跳过。"""
+        if not source_id or not target_id:
+            return
+        try:
+            cognitive.create_relation(
+                source_id=source_id,
+                target_id=target_id,
+                relation_type=relation_type,
+                weight=weight,
+            )
+            logger.info(
+                "[双写] 建立关系 %s --%s--> %s (w=%.2f)",
+                source_id, relation_type, target_id, weight,
+            )
+        except Exception as e:
+            logger.warning(
+                "[双写] 建立关系失败 %s --%s--> %s: %s",
+                source_id, relation_type, target_id, e,
+            )
+
+    # ------------------------------------------------------------
+    # 主流程
+    # ------------------------------------------------------------
+
+    def run(self, ctx) -> SessionResult:
+        """执行一次完整三轮研究。
+
+        :param ctx: :class:`engines.base.ResearchContext`
+            其中 ``ctx.brain_id`` 若非空，则全程触发认知元素双写。
+        :return: :class:`engines.base.SessionResult`
+        """
         start = time.time()
         result = SessionResult()
+
+        # 双写状态：保存各轮产出的 CE id，用于后续建立认知关系
+        brain_id: Optional[int] = getattr(ctx, 'brain_id', None)
+        hypothesis_ce_ids: Dict[str, int] = {}   # hypothesis local_id (H1...) → ce id
+        observation_ce_ids: List[int] = []
+        evidence_ce_ids: List[int] = []
+        conclusion_ce_ids: List[int] = []
+
+        if brain_id:
+            logger.info("[双写] 启用认知元素双写 brain_id=%s session_id=%s",
+                        brain_id, getattr(ctx, 'session_id', None))
+        else:
+            logger.debug("[双写] ctx.brain_id 为空，跳过双写")
 
         system_base = _load_prompt('three_round').format(
             mission=ctx.mission,
@@ -73,6 +210,32 @@ class ThreeRoundEngine(ResearchEngine):
             result.status = 'failed'
             result.duration_seconds = int(time.time() - start)
             return result
+
+        # === 双写：第一轮 → hypothesis 认知元素 ===
+        if brain_id:
+            for h in hypotheses:
+                if not isinstance(h, dict):
+                    continue
+                local_id = str(h.get('id') or f"H{len(hypothesis_ce_ids)+1}")
+                metadata = {
+                    'hypothesis_local_id': local_id,
+                    'test_plan': h.get('test_plan', ''),
+                    'expected_columns': h.get('expected_columns', []),
+                    'topic': ctx.topic,
+                    'confidence_method': 'initial_speculation',
+                    'status': 'proposed',
+                    'source_session_id': getattr(ctx, 'session_id', None),
+                }
+                ce = self._safe_create_element(
+                    brain_id=brain_id,
+                    ce_type='hypothesis',
+                    title=f"{local_id}: {_truncate(h.get('statement', ''), 60)}",
+                    content=h.get('statement', ''),
+                    confidence=_CONF_HYPOTHESIS_INIT,
+                    metadata=metadata,
+                )
+                if ce and ce.get('id'):
+                    hypothesis_ce_ids[local_id] = ce['id']
 
         # === Round 2: Tool-based testing ===
         logger.info(f"[R2] Testing {len(hypotheses)} hypotheses with tools")
@@ -127,6 +290,28 @@ class ThreeRoundEngine(ResearchEngine):
                                    project_id=ctx.project_id, datasets=None)
             test_results.append({'tool': tool_name, 'params': tool_params, 'result': tool_result})
 
+            # === 双写：第二轮 → observation 认知元素（每次工具调用一条）===
+            if brain_id:
+                obs_metadata = {
+                    'tool': tool_name,
+                    'params': tool_params,
+                    'result_excerpt': _truncate(tool_result, 1000),
+                    'topic': ctx.topic,
+                    'confidence_method': 'tool_execution',
+                    'status': 'frozen',
+                    'source_session_id': getattr(ctx, 'session_id', None),
+                }
+                ce = self._safe_create_element(
+                    brain_id=brain_id,
+                    ce_type='observation',
+                    title=f"{tool_name}",
+                    content=f"工具 {tool_name} 调用产物：{_truncate(tool_result, 400)}",
+                    confidence=_CONF_OBSERVATION,
+                    metadata=obs_metadata,
+                )
+                if ce and ce.get('id'):
+                    observation_ce_ids.append(ce['id'])
+
             r2_messages.append({'role': 'assistant', 'content': r2_text})
             r2_messages.append({
                 'role': 'user',
@@ -169,10 +354,204 @@ class ThreeRoundEngine(ResearchEngine):
                 'test_results': test_results,
                 'verdicts': verdicts,
             }, ensure_ascii=False, default=str)
+
+            # === 双写：第三轮 → evidence / counter_evidence / conclusion / inference / question ===
+            if brain_id:
+                self._dual_write_round3(
+                    brain_id=brain_id,
+                    session_id=getattr(ctx, 'session_id', None),
+                    topic=ctx.topic,
+                    verdicts=verdicts,
+                    findings=result.findings,
+                    next_directions=result.next_directions,
+                    hypothesis_ce_ids=hypothesis_ce_ids,
+                    observation_ce_ids=observation_ce_ids,
+                    evidence_ce_ids=evidence_ce_ids,
+                    conclusion_ce_ids=conclusion_ce_ids,
+                )
         else:
             result.status = 'partial'
             logger.warning("Round 3 failed to parse JSON")
 
         result.duration_seconds = int(time.time() - start)
-        logger.info(f"Session completed: {result.status}, {len(result.findings)} findings, {result.duration_seconds}s")
+        logger.info(
+            f"Session completed: {result.status}, {len(result.findings)} findings, "
+            f"{result.duration_seconds}s"
+        )
+        if brain_id:
+            logger.info(
+                "[双写] 本会话写入 CE 数：hypothesis=%d observation=%d evidence=%d conclusion/inference=%d",
+                len(hypothesis_ce_ids), len(observation_ce_ids),
+                len(evidence_ce_ids), len(conclusion_ce_ids),
+            )
         return result
+
+    # ------------------------------------------------------------
+    # 第三轮双写专用方法（拆分以避免 run() 过长）
+    # ------------------------------------------------------------
+
+    def _dual_write_round3(
+        self,
+        brain_id: int,
+        session_id: Optional[int],
+        topic: str,
+        verdicts: List[Dict[str, Any]],
+        findings: List[Dict[str, Any]],
+        next_directions: List[Any],
+        hypothesis_ce_ids: Dict[str, int],
+        observation_ce_ids: List[int],
+        evidence_ce_ids: List[int],
+        conclusion_ce_ids: List[int],
+    ) -> None:
+        """把第三轮（结论）产物写入认知元素并建立关系。
+
+        外层函数的 ``evidence_ce_ids`` / ``conclusion_ce_ids`` 列表会被原地填充，
+        以便 :meth:`run` 末尾日志中能够汇总数量。
+        """
+        # ---- 1) verdicts → evidence / counter_evidence ----
+        for v in verdicts or []:
+            if not isinstance(v, dict):
+                continue
+            try:
+                h_local_id = str(v.get('hypothesis_id') or '')
+                verdict = (v.get('verdict') or 'inconclusive').lower()
+                reasoning = v.get('reasoning', '') or ''
+                ce_type = 'counter_evidence' if verdict == 'refuted' else 'evidence'
+                conf = (
+                    _CONF_COUNTER_EVIDENCE if ce_type == 'counter_evidence'
+                    else _CONF_EVIDENCE
+                )
+                metadata = {
+                    'verdict': verdict,
+                    'hypothesis_local_id': h_local_id,
+                    'topic': topic,
+                    'confidence_method': 'tool_verification',
+                    'status': 'frozen',
+                    'source_session_id': session_id,
+                }
+                ce = self._safe_create_element(
+                    brain_id=brain_id,
+                    ce_type=ce_type,
+                    title=f"{h_local_id} 验证: {verdict}",
+                    content=reasoning or f"hypothesis {h_local_id} verdict={verdict}",
+                    confidence=conf,
+                    metadata=metadata,
+                )
+                if not (ce and ce.get('id')):
+                    continue
+                evidence_ce_ids.append(ce['id'])
+
+                # 关系：evidence --supports/refutes--> hypothesis
+                target_h_id = hypothesis_ce_ids.get(h_local_id)
+                if target_h_id:
+                    rel = 'refutes' if verdict == 'refuted' else 'supports'
+                    self._safe_create_relation(
+                        source_id=ce['id'],
+                        target_id=target_h_id,
+                        relation_type=rel,
+                        weight=conf,
+                    )
+
+                # 关系：evidence --derives_from--> 各 observation
+                for obs_id in observation_ce_ids:
+                    self._safe_create_relation(
+                        source_id=ce['id'],
+                        target_id=obs_id,
+                        relation_type='derives_from',
+                        weight=0.6,
+                    )
+            except Exception as e:
+                logger.warning("[双写] verdict 处理失败: %s", e)
+
+        # ---- 2) findings → conclusion / inference ----
+        for f in findings or []:
+            if not isinstance(f, dict):
+                continue
+            try:
+                conf_label = (f.get('confidence') or 'low').lower()
+                conf_val = _FINDING_CONF_MAP.get(conf_label, 0.5)
+                ce_type = (
+                    'conclusion' if conf_val >= _CONCLUSION_PROMOTE_THRESHOLD
+                    else 'inference'
+                )
+                metadata = {
+                    'category': f.get('category', 'general'),
+                    'evidence_text': f.get('evidence', ''),
+                    'actionable': bool(f.get('actionable')),
+                    'action_suggestion': f.get('action_suggestion', ''),
+                    'confidence_label': conf_label,
+                    'topic': topic,
+                    'confidence_method': 'finding_self_assessed',
+                    'status': 'accepted' if ce_type == 'conclusion' else 'proposed',
+                    'source_session_id': session_id,
+                }
+                ce = self._safe_create_element(
+                    brain_id=brain_id,
+                    ce_type=ce_type,
+                    title=_truncate(f.get('finding', ''), 60),
+                    content=f.get('finding', ''),
+                    confidence=conf_val,
+                    metadata=metadata,
+                )
+                if not (ce and ce.get('id')):
+                    continue
+                conclusion_ce_ids.append(ce['id'])
+
+                # 关系：conclusion/inference --derives_from--> evidence
+                for ev_id in evidence_ce_ids:
+                    self._safe_create_relation(
+                        source_id=ce['id'],
+                        target_id=ev_id,
+                        relation_type='derives_from',
+                        weight=conf_val,
+                    )
+                # 当无 evidence 时，回退到直接挂在 hypothesis 上，避免孤立节点
+                if not evidence_ce_ids:
+                    for h_id in hypothesis_ce_ids.values():
+                        self._safe_create_relation(
+                            source_id=ce['id'],
+                            target_id=h_id,
+                            relation_type='derives_from',
+                            weight=conf_val,
+                        )
+            except Exception as e:
+                logger.warning("[双写] finding 处理失败: %s", e)
+
+        # ---- 3) next_directions → question ----
+        for nd in next_directions or []:
+            try:
+                if isinstance(nd, dict):
+                    nd_text = nd.get('topic') or nd.get('question') or json.dumps(
+                        nd, ensure_ascii=False
+                    )
+                else:
+                    nd_text = str(nd or '')
+                if not nd_text.strip():
+                    continue
+                metadata = {
+                    'origin': 'three_round_next_direction',
+                    'parent_topic': topic,
+                    'status': 'open',
+                    'confidence_method': 'agent_proposed',
+                    'source_session_id': session_id,
+                }
+                ce = self._safe_create_element(
+                    brain_id=brain_id,
+                    ce_type='question',
+                    title=_truncate(nd_text, 60),
+                    content=nd_text,
+                    confidence=_CONF_QUESTION,
+                    metadata=metadata,
+                )
+                if not (ce and ce.get('id')):
+                    continue
+                # 关系：conclusion --inspires--> question
+                for c_id in conclusion_ce_ids:
+                    self._safe_create_relation(
+                        source_id=c_id,
+                        target_id=ce['id'],
+                        relation_type='inspires',
+                        weight=0.5,
+                    )
+            except Exception as e:
+                logger.warning("[双写] next_direction 处理失败: %s", e)

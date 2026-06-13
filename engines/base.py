@@ -21,6 +21,10 @@ class ResearchContext:
     directives: list = field(default_factory=list)
     session_id: Optional[int] = None
     queue_id: Optional[int] = None
+    # === 双写：硅基大脑实例 id ===
+    # 当存在关联 brain 时，引擎会同步把研究产物写入 cognitive_elements/cognitive_relations。
+    # 仅有旧 project_id 时此字段为 None，引擎跳过双写但保持原流程不变。
+    brain_id: Optional[int] = None
 
 
 @dataclass

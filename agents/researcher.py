@@ -11,6 +11,26 @@ logger = logging.getLogger(__name__)
 ENGINE = ThreeRoundEngine()
 
 
+def _resolve_brain_id(project_id):
+    """通过 legacy_project_id 反查关联的硅基大脑 id。
+
+    旧流程仅有 project_id；如果该项目已被映射到 brains 表（``legacy_project_id``
+    指向当前项目），则返回最新一个 brain 的 id，供引擎做认知元素双写。
+    任何异常或未找到记录都返回 ``None``，调用方会自动跳过双写。
+    """
+    try:
+        with db.get_db() as conn:
+            row = conn.execute(
+                "SELECT id FROM brains WHERE legacy_project_id=? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (project_id,)
+            ).fetchone()
+            return row['id'] if row else None
+    except Exception as e:
+        logger.warning(f"[双写] resolve brain_id failed for project {project_id}: {e}")
+        return None
+
+
 def run_research_session(project_id, topic=None):
     """Run a single research session for a project."""
     project = db.get_project(project_id)
@@ -47,6 +67,7 @@ def run_research_session(project_id, topic=None):
         datasets_summary=datasets_summary,
         recent_findings=recent_findings,
         directives=directives,
+        brain_id=_resolve_brain_id(project_id),
     )
 
     session_id = db.create_session(

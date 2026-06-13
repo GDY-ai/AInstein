@@ -176,6 +176,189 @@ def run_director(pid):
     return jsonify(result or {'status': 'no result'})
 
 
+# ============================================================
+# 硅基大脑 —— 认知元素 / 认知关系 / 知识图谱 / 认知边界
+# 蓝图 §1.1 §2.4，业务逻辑见 cognitive.py
+# ============================================================
+
+def _ensure_brain(brain_id: int):
+    """校验大脑存在，否则返回 (None, 404 response)。"""
+    brain = db.get_brain(brain_id)
+    if not brain:
+        return None, (jsonify({'error': 'brain not found'}), 404)
+    return brain, None
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/cognitive-elements', methods=['GET'])
+def list_cognitive_elements(brain_id: int):
+    """列出指定大脑下的认知元素，支持类型 / 最低置信度 / 分页过滤。"""
+    import cognitive
+    _, err = _ensure_brain(brain_id)
+    if err:
+        return err
+    ce_type = request.args.get('type')
+    min_conf = request.args.get('min_confidence', type=float)
+    limit = request.args.get('limit', default=50, type=int)
+    offset = request.args.get('offset', default=0, type=int)
+    try:
+        items = cognitive.list_elements(
+            brain_id=brain_id,
+            ce_type=ce_type,
+            min_confidence=min_conf,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'items': items, 'limit': limit, 'offset': offset})
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/cognitive-elements', methods=['POST'])
+def create_cognitive_element(brain_id: int):
+    """创建认知元素。请求体字段：type / title / content / confidence /
+    source_agent_id / metadata。"""
+    import cognitive
+    _, err = _ensure_brain(brain_id)
+    if err:
+        return err
+    data = request.get_json() or {}
+    try:
+        element = cognitive.create_element(
+            brain_id=brain_id,
+            ce_type=data.get('type'),
+            title=data.get('title', ''),
+            content=data.get('content', ''),
+            confidence=data.get('confidence', 0.5),
+            source_agent_id=data.get('source_agent_id'),
+            metadata_json=data.get('metadata') or data.get('metadata_json'),
+        )
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(element), 201
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/cognitive-elements/<int:ce_id>',
+           methods=['GET'])
+def get_cognitive_element(brain_id: int, ce_id: int):
+    """获取单个认知元素详情。"""
+    import cognitive
+    element = cognitive.get_element(ce_id)
+    if not element or element['brain_id'] != brain_id:
+        return jsonify({'error': 'cognitive element not found'}), 404
+    return jsonify(element)
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/cognitive-elements/<int:ce_id>',
+           methods=['PUT'])
+def update_cognitive_element_api(brain_id: int, ce_id: int):
+    """更新认知元素。支持的字段见 cognitive.update_element。
+    若请求体含 ``confidence_reason``，将走 ``update_confidence`` 路径以记录变更历史。"""
+    import cognitive
+    existing = cognitive.get_element(ce_id)
+    if not existing or existing['brain_id'] != brain_id:
+        return jsonify({'error': 'cognitive element not found'}), 404
+    data = request.get_json() or {}
+
+    reason = data.pop('confidence_reason', None)
+    if reason is not None and 'confidence' in data:
+        try:
+            cognitive.update_confidence(ce_id, data.pop('confidence'), reason=reason)
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+
+    if data:
+        try:
+            cognitive.update_element(ce_id, data)
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+
+    return jsonify(cognitive.get_element(ce_id))
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/cognitive-relations', methods=['GET'])
+def list_cognitive_relations(brain_id: int):
+    """列出认知关系。可选 query: src_id / dst_id / relation / element_id (取该节点全部边)。"""
+    import cognitive
+    _, err = _ensure_brain(brain_id)
+    if err:
+        return err
+
+    element_id = request.args.get('element_id', type=int)
+    if element_id is not None:
+        direction = request.args.get('direction', default='both')
+        try:
+            return jsonify({'items': cognitive.get_relations(element_id, direction=direction)})
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+
+    src_id = request.args.get('src_id', type=int)
+    dst_id = request.args.get('dst_id', type=int)
+    relation = request.args.get('relation')
+    rows = db.get_cognitive_relations(brain_id, src_id=src_id, dst_id=dst_id, relation=relation)
+    return jsonify({'items': rows})
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/cognitive-relations', methods=['POST'])
+def create_cognitive_relation_api(brain_id: int):
+    """创建认知关系。请求体：source_id / target_id / relation_type / weight / created_by_agent_id。"""
+    import cognitive
+    _, err = _ensure_brain(brain_id)
+    if err:
+        return err
+    data = request.get_json() or {}
+    try:
+        rel = cognitive.create_relation(
+            source_id=int(data['source_id']),
+            target_id=int(data['target_id']),
+            relation_type=data.get('relation_type') or data.get('relation'),
+            weight=data.get('weight', 0.5),
+            created_by_agent_id=data.get('created_by_agent_id'),
+        )
+    except (KeyError, TypeError) as e:
+        return jsonify({'error': f'missing field: {e}'}), 400
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    if not rel or rel.get('brain_id') != brain_id:
+        return jsonify({'error': 'relation not created or brain mismatch'}), 400
+    return jsonify(rel), 201
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/knowledge-graph', methods=['GET'])
+def get_knowledge_graph_api(brain_id: int):
+    """返回前端力导向图所需的 nodes + edges 结构。
+
+    Query 参数：
+      - ``types``: 逗号分隔的 CE 类型白名单
+      - ``limit``: 节点上限，默认 200
+    """
+    import cognitive
+    _, err = _ensure_brain(brain_id)
+    if err:
+        return err
+    types_param = request.args.get('types')
+    ce_types = [t.strip() for t in types_param.split(',')] if types_param else None
+    limit = request.args.get('limit', default=200, type=int)
+    try:
+        graph = cognitive.get_knowledge_graph(brain_id, ce_types=ce_types, limit=limit)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify(graph)
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/frontier', methods=['GET'])
+def get_frontier_api(brain_id: int):
+    """获取大脑认知边界（最近 / 低置信度 / 未被支撑 三类元素的并集）。"""
+    import cognitive
+    _, err = _ensure_brain(brain_id)
+    if err:
+        return err
+    limit = request.args.get('limit', default=50, type=int)
+    ceiling = request.args.get('confidence_ceiling', default=0.7, type=float)
+    return jsonify(cognitive.get_frontier(
+        brain_id, limit=limit, confidence_ceiling=ceiling
+    ))
+
+
 if __name__ == '__main__':
     db.init_db()
     app.run(debug=True, port=9089)
