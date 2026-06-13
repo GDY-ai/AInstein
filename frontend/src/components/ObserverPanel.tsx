@@ -3,8 +3,8 @@ import { api } from '../api'
 import type { ObserverLog, ObserverLogBody } from '../types'
 
 // ============================================================
-//  ObserverPanel — 观察员视角（紧凑版）
-//  一屏可见，溢出可隐式滚动，绝不截断。
+//  ObserverPanel — 观察员视角（可读优先版）
+//  正常字体、自然换行、可见细滚动条；宁可滚动也要内容完整。
 // ============================================================
 
 interface Props {
@@ -26,7 +26,6 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string>('')
   const [lastSync, setLastSync] = useState<Date | null>(null)
-  const [narrativeExpanded, setNarrativeExpanded] = useState(false)
   const aliveRef = useRef(true)
 
   // ---------- 拉取最新总结 ----------
@@ -127,7 +126,7 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
         style={headerBtn}
         title={open ? '折叠' : '展开'}
       >
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <span style={titleEmoji} aria-hidden>🔭</span>
           <span style={titleText}>观察员视角</span>
           {body && (
@@ -137,7 +136,7 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
           )}
           {isHighImportance && <span style={importanceBadge}>HIGH</span>}
         </span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {lastSync && (
             <span style={syncStamp}>{lastSync.toLocaleTimeString().slice(0, 5)}</span>
           )}
@@ -167,13 +166,7 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
               </div>
 
               {body.narrative && (
-                <p
-                  style={narrativeExpanded ? narrativeOpen : narrativeStyle}
-                  onClick={() => setNarrativeExpanded(v => !v)}
-                  title={narrativeExpanded ? '点击折叠' : '点击展开全文'}
-                >
-                  {body.narrative}
-                </p>
+                <p style={narrativeStyle}>{body.narrative}</p>
               )}
 
               {/* 主要方向 */}
@@ -181,7 +174,7 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
                 <Row label="方向">
                   <div style={chipRow}>
                     {body.main_directions.map((d, i) => (
-                      <span key={i} style={chipStyle} title={d}>{d}</span>
+                      <span key={i} style={chipStyle}>{d}</span>
                     ))}
                   </div>
                 </Row>
@@ -191,41 +184,32 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
               {Array.isArray(body.key_developments) && body.key_developments.length > 0 && (
                 <Row label="发展">
                   <ul style={listStyle}>
-                    {body.key_developments.map((d, i) => {
-                      const tip = d.cited_ce_ids && d.cited_ce_ids.length > 0
-                        ? `${d.summary}  (${d.cited_ce_ids.map(id => '#' + id).join(' · ')})`
-                        : d.summary
-                      return (
-                        <li key={i} style={listItem} title={tip}>
-                          <span style={bullet} aria-hidden />
-                          <span style={lineEllipsis}>{d.summary}</span>
+                    {body.key_developments.map((d, i) => (
+                      <li key={i} style={listItem}>
+                        <span style={bullet} aria-hidden />
+                        <span style={listText}>
+                          {d.summary}
                           {d.cited_ce_ids && d.cited_ce_ids.length > 0 && (
                             <span style={citeStyle}>
-                              {d.cited_ce_ids.slice(0, 3).map(id => `#${id}`).join('·')}
+                              {' '}{d.cited_ce_ids.map(id => `#${id}`).join(' · ')}
                             </span>
                           )}
-                        </li>
-                      )
-                    })}
+                        </span>
+                      </li>
+                    ))}
                   </ul>
                 </Row>
               )}
 
-              {/* 单行摘要型字段 */}
+              {/* 段落型字段（自然换行，全文显示） */}
               {body.deliberation_dynamics && (
-                <Row label="博弈">
-                  <span style={oneLine} title={body.deliberation_dynamics}>{body.deliberation_dynamics}</span>
-                </Row>
+                <Row label="博弈"><span style={paragraph}>{body.deliberation_dynamics}</span></Row>
               )}
               {body.frontier_movement && (
-                <Row label="边界">
-                  <span style={oneLine} title={body.frontier_movement}>{body.frontier_movement}</span>
-                </Row>
+                <Row label="边界"><span style={paragraph}>{body.frontier_movement}</span></Row>
               )}
               {body.health_assessment && (
-                <Row label="评价">
-                  <span style={oneLine} title={body.health_assessment}>{body.health_assessment}</span>
-                </Row>
+                <Row label="评价"><span style={paragraph}>{body.health_assessment}</span></Row>
               )}
             </div>
           )}
@@ -242,21 +226,21 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
           <div style={historyBlock}>
             <button onClick={() => setHistoryOpen(o => !o)} style={historyToggle}>
               <span>{historyOpen ? '收起历史' : '查看历史'}</span>
-              <span style={{ opacity: 0.5, fontSize: 10 }}>{historyOpen ? '▴' : '▾'}</span>
+              <span style={{ opacity: 0.5, fontSize: 12 }}>{historyOpen ? '▴' : '▾'}</span>
             </button>
 
             {historyOpen && (
-              <div style={{ marginTop: 4 }}>
-                {historyLoading && <div style={oneLine}>加载中…</div>}
+              <div style={{ marginTop: 8 }}>
+                {historyLoading && <div style={paragraph}>加载中…</div>}
                 {!historyLoading && history.length === 0 && (
-                  <div style={oneLine}>暂无历史总结</div>
+                  <div style={paragraph}>暂无历史总结</div>
                 )}
                 {!historyLoading && history.length > 0 && (
                   <ol style={historyList}>
                     {history.map(h => (
                       <li key={h.id} style={historyItem}>
                         <span style={historyDot} />
-                        <span style={historyTitle} title={h.title || `观察 #${h.id}`}>
+                        <span style={historyTitleStyle}>
                           {h.title || `观察 #${h.id}`}
                         </span>
                         <span style={historyTime}>{formatTime(h.created_at)}</span>
@@ -268,13 +252,13 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
             )}
           </div>
 
-          {/* 操作行：按钮 inline */}
+          {/* 操作行 */}
           <div style={footerRow}>
             <button onClick={handleGenerate} disabled={generating} style={generateBtn(generating)}>
               {generating ? '凝视中…' : '请求新观察'}
             </button>
             {body && (
-              <span style={{ fontSize: 10, color: 'var(--text2)', letterSpacing: 1, opacity: 0.6 }}>
+              <span style={{ fontSize: 11, color: 'var(--text2)', letterSpacing: 1, opacity: 0.65 }}>
                 IMPORTANCE · {(body.importance * 100).toFixed(0)}
               </span>
             )}
@@ -282,7 +266,7 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
         </div>
       )}
 
-      {/* 局部样式：动画 + 隐藏滚动条 */}
+      {/* 局部样式：动画 + 美化滚动条 */}
       <style>{`
         @keyframes observerScan {
           0% { background-position: 0% 50%; }
@@ -317,15 +301,25 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
           animation: observerEyeFloat 4.6s ease-in-out infinite;
           display: inline-block;
         }
-        /* 关键：允许滚动但隐藏滚动条 */
+        /* 美化的细滚动条（保持可见） */
         .observer-body {
-          scrollbar-width: none;          /* Firefox */
-          -ms-overflow-style: none;       /* IE/Edge */
+          scrollbar-width: thin;
+          scrollbar-color: rgba(168,85,247,0.45) transparent;
         }
         .observer-body::-webkit-scrollbar {
-          display: none;                  /* Chrome/Safari */
-          width: 0;
-          height: 0;
+          width: 8px;
+          height: 8px;
+        }
+        .observer-body::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .observer-body::-webkit-scrollbar-thumb {
+          background: linear-gradient(180deg, rgba(168,85,247,0.55), rgba(99,102,241,0.55));
+          border-radius: 4px;
+          border: 1px solid rgba(255,255,255,0.05);
+        }
+        .observer-body::-webkit-scrollbar-thumb:hover {
+          background: linear-gradient(180deg, rgba(168,85,247,0.85), rgba(99,102,241,0.85));
         }
       `}</style>
     </aside>
@@ -348,7 +342,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 function EmptyState() {
   return (
     <div style={emptyWrap}>
-      <span className="observer-eye" style={{ fontSize: 26, filter: 'drop-shadow(0 0 10px rgba(168,85,247,0.55))' }}>
+      <span className="observer-eye" style={{ fontSize: 30, filter: 'drop-shadow(0 0 10px rgba(168,85,247,0.55))' }}>
         🔭
       </span>
       <div style={emptyTitle}>观察员正在凝视…</div>
@@ -376,7 +370,7 @@ function formatTime(s: string): string {
 }
 
 // ============================================================
-//  样式（紧凑）
+//  样式（可读优先）
 // ============================================================
 
 const wrapperStyle: React.CSSProperties = {
@@ -392,7 +386,7 @@ const wrapperStyle: React.CSSProperties = {
   boxShadow: '0 12px 40px rgba(0,0,0,0.45), inset 0 0 24px rgba(99,102,241,0.05)',
   backdropFilter: 'blur(14px)',
   WebkitBackdropFilter: 'blur(14px)',
-  overflow: 'hidden',           // 外壳保持 hidden，避免阴影跑出
+  overflow: 'hidden',
   isolation: 'isolate',
   minHeight: 0,
 }
@@ -412,20 +406,20 @@ const headerBtn: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   width: '100%',
-  padding: '4px 10px',
+  padding: '10px 14px',
   cursor: 'pointer',
   borderBottom: '1px solid rgba(99,102,241,0.12)',
   flexShrink: 0,
-  minHeight: 26,
+  minHeight: 40,
 }
 
 const titleEmoji: React.CSSProperties = {
-  fontSize: 13,
+  fontSize: 16,
   filter: 'drop-shadow(0 0 6px rgba(168,85,247,0.5))',
 }
 
 const titleText: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: 14,
   fontWeight: 600,
   letterSpacing: 1.5,
   background: 'linear-gradient(90deg, #c4b5fd, #93c5fd)',
@@ -437,40 +431,41 @@ const titleText: React.CSSProperties = {
 }
 
 const importanceBadge: React.CSSProperties = {
-  fontSize: 8,
+  fontSize: 10,
   letterSpacing: 1.2,
-  padding: '1px 5px',
-  borderRadius: 3,
+  padding: '2px 7px',
+  borderRadius: 4,
   background: 'rgba(255,196,0,0.18)',
   color: '#FFD27F',
   border: '1px solid rgba(255,196,0,0.35)',
   whiteSpace: 'nowrap',
+  fontWeight: 600,
 }
 
 const syncStamp: React.CSSProperties = {
-  fontSize: 9,
+  fontSize: 11,
   letterSpacing: 0.8,
   color: 'var(--text2)',
-  opacity: 0.55,
+  opacity: 0.6,
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
 }
 
 const chevron = (open: boolean): React.CSSProperties => ({
-  fontSize: 11,
+  fontSize: 13,
   color: 'var(--text2)',
   transform: open ? 'rotate(0deg)' : 'rotate(-90deg)',
   transition: 'transform .2s ease',
-  opacity: 0.6,
+  opacity: 0.7,
 })
 
-// 关键：body 区允许滚动，且隐藏滚动条（在 <style> 里实现）
+// body 区允许滚动；显示美化的细滚动条（在 <style> 中实现）
 const bodyStyle: React.CSSProperties = {
-  padding: '6px 8px 8px',
+  padding: '14px 16px 16px',
   overflowY: 'auto',
   flex: 1,
   minHeight: 0,
-  fontSize: 11,
-  lineHeight: 1.4,
+  fontSize: 13,
+  lineHeight: 1.6,
   color: 'var(--text2)',
 }
 
@@ -478,125 +473,113 @@ const errorBox: React.CSSProperties = {
   background: 'rgba(239,68,68,0.12)',
   border: '1px solid rgba(239,68,68,0.35)',
   color: '#fca5a5',
-  padding: '3px 6px',
-  borderRadius: 4,
-  fontSize: 11,
-  marginBottom: 4,
+  padding: '8px 10px',
+  borderRadius: 6,
+  fontSize: 13,
+  marginBottom: 10,
+  lineHeight: 1.5,
 }
 
 const contentStack: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 4,
+  gap: 10,
 }
 
 const titleRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'baseline',
-  gap: 6,
+  gap: 8,
+  flexWrap: 'wrap',
   minWidth: 0,
 }
 
 const kicker: React.CSSProperties = {
-  fontSize: 9,
+  fontSize: 11,
   letterSpacing: 1,
-  color: 'rgba(196,181,253,0.7)',
+  color: 'rgba(196,181,253,0.75)',
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
   flexShrink: 0,
 }
 
 const summaryTitle: React.CSSProperties = {
-  fontSize: 13,
+  fontSize: 16,
   fontWeight: 600,
   color: 'var(--text)',
-  lineHeight: 1.3,
+  lineHeight: 1.4,
   flex: 1,
   minWidth: 0,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
+  wordBreak: 'break-word',
 }
 
 const timeStamp: React.CSSProperties = {
-  fontSize: 10,
+  fontSize: 11,
   color: 'var(--text2)',
   flexShrink: 0,
   opacity: 0.7,
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
 }
 
 const importanceMeter = (v: number): React.CSSProperties => ({
-  fontSize: 9,
+  fontSize: 11,
   letterSpacing: 0.6,
   color: v >= 0.7 ? '#FFD27F' : v >= 0.4 ? '#93c5fd' : 'var(--text2)',
   border: `1px solid ${v >= 0.7 ? 'rgba(255,196,0,0.4)' : 'rgba(99,102,241,0.25)'}`,
   borderRadius: 999,
-  padding: '0 5px',
+  padding: '1px 8px',
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
 })
 
-// 默认折叠：4 行 line-clamp，点击展开
+// 叙事段落：全文展示，自然换行
 const narrativeStyle: React.CSSProperties = {
   margin: 0,
-  fontSize: 12,
-  lineHeight: 1.45,
+  fontSize: 14,
+  lineHeight: 1.7,
   color: 'var(--text)',
   background:
     'linear-gradient(180deg, rgba(99,102,241,0.07), rgba(168,85,247,0.04))',
   border: '1px solid rgba(99,102,241,0.18)',
-  borderRadius: 5,
-  padding: '5px 8px',
+  borderRadius: 8,
+  padding: '12px 14px',
   whiteSpace: 'pre-wrap',
-  cursor: 'pointer',
-  display: '-webkit-box',
-  WebkitLineClamp: 4,
-  WebkitBoxOrient: 'vertical' as any,
-  overflow: 'hidden',
-  transition: 'all .2s ease',
+  wordBreak: 'break-word',
 }
 
-const narrativeOpen: React.CSSProperties = {
-  ...narrativeStyle,
-  display: 'block',
-  WebkitLineClamp: 'unset' as any,
-  overflow: 'visible',
-}
-
-// 行式区块：标签 + 内容（一行）
+// 行式区块：标签 + 内容
 const rowWrap: React.CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
-  gap: 6,
+  gap: 10,
   minWidth: 0,
 }
 
 const rowLabel: React.CSSProperties = {
-  fontSize: 9,
+  fontSize: 11,
   letterSpacing: 1,
-  color: 'rgba(196,181,253,0.7)',
+  color: 'rgba(196,181,253,0.75)',
   textTransform: 'uppercase' as const,
   flexShrink: 0,
-  width: 30,
-  paddingTop: 2,
+  width: 38,
+  paddingTop: 3,
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
 }
 
 const chipRow: React.CSSProperties = {
   display: 'flex',
   flexWrap: 'wrap',
-  gap: 3,
+  gap: 6,
 }
 
 const chipStyle: React.CSSProperties = {
-  fontSize: 10,
-  padding: '1px 6px',
+  fontSize: 12,
+  padding: '3px 10px',
   borderRadius: 999,
-  background: 'rgba(99,102,241,0.12)',
+  background: 'rgba(99,102,241,0.14)',
   color: '#c4b5fd',
   border: '1px solid rgba(99,102,241,0.32)',
-  maxWidth: 180,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
+  whiteSpace: 'normal',
+  wordBreak: 'break-word',
+  lineHeight: 1.4,
 }
 
 const listStyle: React.CSSProperties = {
@@ -605,72 +588,69 @@ const listStyle: React.CSSProperties = {
   listStyle: 'none',
   display: 'flex',
   flexDirection: 'column',
-  gap: 2,
+  gap: 6,
   minWidth: 0,
 }
 
 const listItem: React.CSSProperties = {
   display: 'flex',
-  alignItems: 'center',
-  gap: 5,
-  fontSize: 11,
-  color: 'var(--text2)',
-  lineHeight: 1.35,
+  alignItems: 'flex-start',
+  gap: 8,
+  fontSize: 13,
+  color: 'var(--text)',
+  lineHeight: 1.55,
   minWidth: 0,
 }
 
-const lineEllipsis: React.CSSProperties = {
+const listText: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
   color: 'var(--text)',
+  wordBreak: 'break-word',
 }
 
 const bullet: React.CSSProperties = {
-  width: 4,
-  height: 4,
-  borderRadius: 2,
+  width: 5,
+  height: 5,
+  borderRadius: 3,
   background: 'linear-gradient(135deg, #a855f7, #6366f1)',
   flexShrink: 0,
+  marginTop: 8,
   boxShadow: '0 0 4px rgba(168,85,247,0.4)',
 }
 
 const citeStyle: React.CSSProperties = {
-  fontSize: 9,
+  fontSize: 11,
   letterSpacing: 0.3,
-  color: 'rgba(147,197,253,0.7)',
+  color: 'rgba(147,197,253,0.75)',
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-  flexShrink: 0,
 }
 
-const oneLine: React.CSSProperties = {
+// 段落：自然换行，全文展示
+const paragraph: React.CSSProperties = {
   display: 'block',
-  fontSize: 11,
-  color: 'var(--text2)',
-  lineHeight: 1.4,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  minWidth: 0,
+  fontSize: 13,
+  color: 'var(--text)',
+  lineHeight: 1.6,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
 }
 
 const rawBox: React.CSSProperties = {
   background: 'rgba(0,0,0,0.3)',
   border: '1px solid rgba(99,102,241,0.18)',
-  borderRadius: 5,
-  padding: 6,
-  fontSize: 10,
+  borderRadius: 6,
+  padding: 10,
+  fontSize: 12,
   whiteSpace: 'pre-wrap',
-  maxHeight: 120,
-  overflow: 'auto',
+  wordBreak: 'break-word',
+  marginTop: 8,
 }
 
 const historyBlock: React.CSSProperties = {
-  marginTop: 6,
-  paddingTop: 4,
-  borderTop: '1px dashed rgba(140,150,200,0.16)',
+  marginTop: 14,
+  paddingTop: 10,
+  borderTop: '1px dashed rgba(140,150,200,0.18)',
 }
 
 const historyToggle: React.CSSProperties = {
@@ -680,8 +660,8 @@ const historyToggle: React.CSSProperties = {
   width: '100%',
   background: 'transparent',
   border: 'none',
-  color: 'rgba(196,181,253,0.85)',
-  fontSize: 10,
+  color: 'rgba(196,181,253,0.9)',
+  fontSize: 12,
   letterSpacing: 1,
   cursor: 'pointer',
   padding: 0,
@@ -694,95 +674,96 @@ const historyList: React.CSSProperties = {
   listStyle: 'none',
   display: 'flex',
   flexDirection: 'column',
-  borderLeft: '1px solid rgba(99,102,241,0.2)',
-  paddingLeft: 8,
-  gap: 2,
+  borderLeft: '1px solid rgba(99,102,241,0.22)',
+  paddingLeft: 14,
+  gap: 6,
+  marginLeft: 4,
 }
 
 const historyItem: React.CSSProperties = {
   display: 'flex',
-  alignItems: 'center',
-  gap: 6,
+  alignItems: 'baseline',
+  gap: 8,
   position: 'relative',
   minWidth: 0,
-  fontSize: 11,
+  fontSize: 13,
+  flexWrap: 'wrap',
 }
 
 const historyDot: React.CSSProperties = {
   position: 'absolute',
-  left: -11,
-  top: '50%',
-  marginTop: -2.5,
-  width: 5,
-  height: 5,
+  left: -17,
+  top: 7,
+  width: 6,
+  height: 6,
   borderRadius: 3,
   background: '#6366f1',
-  boxShadow: '0 0 5px rgba(99,102,241,0.7)',
+  boxShadow: '0 0 6px rgba(99,102,241,0.7)',
 }
 
-const historyTitle: React.CSSProperties = {
+const historyTitleStyle: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
-  fontSize: 11,
+  fontSize: 13,
   color: 'var(--text)',
-  lineHeight: 1.3,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
+  lineHeight: 1.5,
+  wordBreak: 'break-word',
 }
 
 const historyTime: React.CSSProperties = {
-  fontSize: 9,
+  fontSize: 11,
   color: 'var(--text2)',
   letterSpacing: 0.3,
   flexShrink: 0,
   opacity: 0.7,
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
 }
 
 const footerRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  gap: 8,
-  marginTop: 6,
-  paddingTop: 4,
+  gap: 10,
+  marginTop: 14,
+  paddingTop: 10,
   borderTop: '1px solid rgba(99,102,241,0.12)',
   flexShrink: 0,
 }
 
 const generateBtn = (loading: boolean): React.CSSProperties => ({
   appearance: 'none',
-  border: '1px solid rgba(99,102,241,0.35)',
+  border: '1px solid rgba(99,102,241,0.4)',
   background:
-    'linear-gradient(135deg, rgba(99,102,241,0.18), rgba(168,85,247,0.12))',
+    'linear-gradient(135deg, rgba(99,102,241,0.22), rgba(168,85,247,0.16))',
   color: '#c4b5fd',
-  fontSize: 11,
+  fontSize: 13,
   letterSpacing: 1,
-  padding: '3px 9px',
-  borderRadius: 4,
+  padding: '6px 14px',
+  borderRadius: 6,
   cursor: loading ? 'wait' : 'pointer',
   opacity: loading ? 0.6 : 1,
+  fontWeight: 500,
 })
 
 const emptyWrap: React.CSSProperties = {
   textAlign: 'center',
-  padding: '16px 8px',
+  padding: '28px 14px',
   color: 'var(--text2)',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
-  gap: 6,
+  gap: 10,
 }
 
 const emptyTitle: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: 14,
   color: 'var(--text)',
   letterSpacing: 1,
 }
 
 const emptySub: React.CSSProperties = {
-  fontSize: 10,
+  fontSize: 12,
   color: 'var(--text2)',
-  lineHeight: 1.5,
-  opacity: 0.7,
+  lineHeight: 1.6,
+  opacity: 0.75,
 }

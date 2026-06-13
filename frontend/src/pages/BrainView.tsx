@@ -96,6 +96,50 @@ export default function BrainView() {
   const svgRef = useRef<SVGSVGElement>(null)
   const simRef = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null)
   const nodeMapRef = useRef<Map<number, GraphNode>>(new Map())
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null)
+  const userInteractedRef = useRef<boolean>(false)
+
+  // ---------- 自动适配视图：根据所有节点 bounding box 计算 zoom transform ----------
+  function fitAllNodes(animate: boolean = true) {
+    if (!svgRef.current || !containerRef.current || !zoomRef.current) return
+    const nodes = Array.from(nodeMapRef.current.values())
+    if (!nodes.length) return
+    const w = containerRef.current.clientWidth
+    const h = containerRef.current.clientHeight
+    if (!w || !h) return
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+    for (const n of nodes) {
+      if (typeof n.x !== 'number' || typeof n.y !== 'number') continue
+      if (!isFinite(n.x) || !isFinite(n.y)) continue
+      if (n.x < minX) minX = n.x
+      if (n.x > maxX) maxX = n.x
+      if (n.y < minY) minY = n.y
+      if (n.y > maxY) maxY = n.y
+    }
+    if (!isFinite(minX) || !isFinite(maxX)) return
+
+    const padding = 80
+    const bboxWidth = (maxX - minX) + padding * 2
+    const bboxHeight = (maxY - minY) + padding * 2
+    if (bboxWidth <= 0 || bboxHeight <= 0) return
+
+    const scale = Math.min(w / bboxWidth, h / bboxHeight, 1.5)
+    const centerX = (minX + maxX) / 2
+    const centerY = (minY + maxY) / 2
+
+    const transform = d3.zoomIdentity
+      .translate(w / 2, h / 2)
+      .scale(scale)
+      .translate(-centerX, -centerY)
+
+    const svg = d3.select(svgRef.current)
+    if (animate) {
+      svg.transition().duration(750).call(zoomRef.current.transform as any, transform)
+    } else {
+      svg.call(zoomRef.current.transform as any, transform)
+    }
+  }
 
   // ---------- 拉取数据（每 10 秒轮询） ----------
   useEffect(() => {
@@ -368,8 +412,18 @@ export default function BrainView() {
       nodeSel.attr('transform', d => `translate(${d.x},${d.y})`)
     })
 
+    // 一次性的 end 监听器：仅在本次 graph 数据稳定时 fit 一次，
+    // 避免后续用户拖拽节点导致的 simulation restart 反复重置视图
+    let fitted = false
+    simRef.current.on('end', () => {
+      if (fitted) return
+      fitted = true
+      fitAllNodes(true)
+    })
+
     return () => {
       simRef.current?.on('tick', null)
+      simRef.current?.on('end', null)
     }
   }, [graph])
 
@@ -449,7 +503,7 @@ export default function BrainView() {
     const gRoot = svg.select<SVGGElement>('g.viewport')
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.25, 4])
+      .scaleExtent([0.05, 4])
       .filter((event: any) => {
         // 不让节点拖拽触发画布平移
         if (event.button) return false
@@ -457,9 +511,14 @@ export default function BrainView() {
         if (target && target.closest('g.node')) return false
         return true
       })
+      .on('start', (event: any) => {
+        // 用户主动操作（鼠标/触控/滚轮）才标记，程序触发的 transition 不算
+        if (event.sourceEvent) userInteractedRef.current = true
+      })
       .on('zoom', event => {
         gRoot.attr('transform', event.transform.toString())
       })
+    zoomRef.current = zoom
     svg.call(zoom as any)
     // 点击空白取消选中
     svg.on('click', () => setSelected(null))
