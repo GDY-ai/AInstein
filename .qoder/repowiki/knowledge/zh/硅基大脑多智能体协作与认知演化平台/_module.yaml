@@ -1,6 +1,6 @@
 schema_version: 1
 module_path: backend
-title: 硅基大脑多智能体协作平台
+title: 硅基大脑多智能体协作与认知演化平台
 scope:
     - agents/
     - engines/

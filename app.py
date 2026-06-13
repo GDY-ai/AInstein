@@ -1037,6 +1037,101 @@ def api_active_brains():
     return jsonify({'items': items, 'count': len(items)})
 
 
+# ============================================================
+# 硅基大脑 —— 论文生成（Paper Generation）
+# ============================================================
+
+import threading
+import uuid as _uuid
+
+# 存储论文任务状态（内存中，重启丢失）
+_paper_tasks = {}
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/generate-paper', methods=['POST'])
+def generate_paper_api(brain_id: int):
+    """发起论文生成任务（异步后台执行）。"""
+    _, err = _ensure_brain(brain_id)
+    if err:
+        return err
+
+    task_id = str(_uuid.uuid4())
+    _paper_tasks[task_id] = {
+        'brain_id': brain_id,
+        'status': 'processing',
+        'progress': '任务已创建，正在排队...',
+        'pdf_filename': None,
+        'md_filename': None,
+    }
+
+    def _run_paper_gen(bid, tid):
+        try:
+            from paper_generator import generate_paper, get_task_status
+            generate_paper(bid, tid)
+            # 同步状态到 _paper_tasks
+            result = get_task_status(tid)
+            _paper_tasks[tid].update(result)
+        except Exception as e:
+            logger.exception('paper generation failed brain=%s task=%s', bid, tid)
+            _paper_tasks[tid]['status'] = 'error'
+            _paper_tasks[tid]['progress'] = f'生成失败: {str(e)}'
+
+    t = threading.Thread(target=_run_paper_gen, args=(brain_id, task_id), daemon=True)
+    t.start()
+
+    return jsonify({'task_id': task_id, 'status': 'processing'}), 202
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/paper-status/<task_id>')
+def paper_status(brain_id: int, task_id: str):
+    """查询论文生成任务状态。"""
+    from paper_generator import get_task_status
+    task = get_task_status(task_id)
+    if task.get('status') == 'unknown':
+        # 也尝试从内存中查找（同 worker 场景）
+        task = _paper_tasks.get(task_id)
+        if not task:
+            return jsonify({'error': 'task not found'}), 404
+
+    result = {
+        'task_id': task_id,
+        'brain_id': brain_id,
+        'status': task.get('status', 'unknown'),
+        'progress': task.get('progress', ''),
+    }
+
+    if task.get('status') == 'done':
+        pdf_fn = task.get('pdf_filename')
+        md_fn = task.get('md_filename')
+        if pdf_fn:
+            result['download_url'] = f'/ainstein/api/brains/{brain_id}/paper/{pdf_fn}'
+        if md_fn:
+            result['markdown_url'] = f'/ainstein/api/brains/{brain_id}/paper/{md_fn}'
+
+    return jsonify(result)
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/paper/<filename>')
+def download_paper(brain_id: int, filename: str):
+    """下载生成的论文文件（PDF 或 Markdown）。"""
+    from paper_generator import PAPERS_DIR
+    import re
+
+    # 安全校验文件名
+    if not re.match(r'^brain\d+_\d{8}_\d{6}\.(pdf|md)$', filename):
+        return jsonify({'error': 'invalid filename'}), 400
+
+    # 确认文件名中的 brain_id 与路由一致
+    if not filename.startswith(f'brain{brain_id}_'):
+        return jsonify({'error': 'brain_id mismatch'}), 403
+
+    file_path = os.path.join(PAPERS_DIR, filename)
+    if not os.path.isfile(file_path):
+        return jsonify({'error': 'file not found'}), 404
+
+    return send_from_directory(PAPERS_DIR, filename, as_attachment=True)
+
+
 if __name__ == '__main__':
     db.init_db()
     # 挂载观察员事件订阅（全局，幂等）

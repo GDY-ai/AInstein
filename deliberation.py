@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -225,12 +226,24 @@ class DeliberationEngine:
         existing = self._load_history(deliberation_id)
         round_turns: List[Dict[str, Any]] = []
 
+        # 建设性综合博弈：在 topic 前面注入引导语，让 Agent 倾向"综合"而非"推翻"
+        if self._is_synthesis_mode(topic):
+            guidance = (
+                "这是一场建设性综合博弈。请评估上述认知元素是否可以被合理地综合"
+                "为一个更高层次的结论。如果同意综合，请用 stance='propose' 或 "
+                "'support'，并在发言中提出综合后的核心表述。如果认为它们差异太大"
+                "无法综合，请用 stance='oppose' 并说明原因。"
+            )
+            agent_topic = f"{guidance}\n\n{topic}"
+        else:
+            agent_topic = topic
+
         for agent in participants:
             # 单个 Agent 失败不应中断整轮
             try:
                 turn = agent.participate_in_deliberation(
                     deliberation_id=deliberation_id,
-                    topic=topic,
+                    topic=agent_topic,
                     existing_arguments=existing + round_turns,
                 )
             except Exception:
@@ -703,19 +716,51 @@ class DeliberationEngine:
         all_turns: List[Dict[str, Any]],
         weighted_summary: Dict[str, float],
     ) -> Optional[int]:
-        """根据 outcome 生成对应 CE 并与触发 CE 建立关系。"""
-        if outcome == "consensus":
-            ce_type = "consensus"
-            relation = "supports"
-            confidence = float(weighted_summary.get("agree_ratio", 0.75))
-        elif outcome == "majority":
-            ce_type = "perspective"
-            relation = "relates_to"
-            confidence = float(weighted_summary.get("agree_ratio", 0.6))
-        else:  # dissent
-            ce_type = "dissent"
-            relation = "contradicts"
-            confidence = 0.5
+        """根据 outcome 生成对应 CE 并与触发 CE 建立关系。
+
+        支持两种模式：
+
+        - **推翻式博弈**（默认）：consensus → ``consensus`` CE / supports；
+          majority → ``perspective`` / relates_to；dissent → ``dissent`` /
+          contradicts。
+        - **建设性综合博弈**（topic 前缀含「综合」「统一结论」）：
+          consensus → ``conclusion`` / derives_from（更高置信度）；
+          majority → ``inference`` / derives_from；
+          dissent → ``dissent`` / related_to。
+          综合成功时还会与 topic 中所有源 CE 建立 ``derives_from`` 关系。
+        """
+        is_synthesis = self._is_synthesis_mode(topic)
+
+        if is_synthesis:
+            if outcome == "consensus":
+                ce_type = "conclusion"  # 综合成功 → 产出结论
+                relation = "derives_from"
+                # 建设性综合给较高置信度
+                confidence = min(
+                    0.9,
+                    float(weighted_summary.get("agree_ratio", 0.75)) * 0.95,
+                )
+            elif outcome == "majority":
+                ce_type = "inference"  # 多数同意但不够强 → 产出推论
+                relation = "derives_from"
+                confidence = float(weighted_summary.get("agree_ratio", 0.6)) * 0.85
+            else:  # dissent
+                ce_type = "dissent"
+                relation = "relates_to"
+                confidence = 0.5
+        else:
+            if outcome == "consensus":
+                ce_type = "consensus"
+                relation = "supports"
+                confidence = float(weighted_summary.get("agree_ratio", 0.75))
+            elif outcome == "majority":
+                ce_type = "perspective"
+                relation = "relates_to"
+                confidence = float(weighted_summary.get("agree_ratio", 0.6))
+            else:  # dissent
+                ce_type = "dissent"
+                relation = "contradicts"
+                confidence = 0.5
 
         # 关键论点（最多取 5 条不同 stance / role 的发言）
         key_args = self._summarize_key_arguments(all_turns, limit=5)
@@ -731,11 +776,18 @@ class DeliberationEngine:
             )
         content = "\n".join(body_lines)
 
-        title = {
-            "consensus": f"[共识] {topic[:30]}",
-            "majority":  f"[多数观点] {topic[:30]}",
-            "dissent":   f"[分歧] {topic[:30]}",
-        }[outcome]
+        if is_synthesis:
+            title = {
+                "consensus": f"[综合结论] {topic[:30]}",
+                "majority":  f"[综合推论] {topic[:30]}",
+                "dissent":   f"[综合失败] {topic[:30]}",
+            }[outcome]
+        else:
+            title = {
+                "consensus": f"[共识] {topic[:30]}",
+                "majority":  f"[多数观点] {topic[:30]}",
+                "dissent":   f"[分歧] {topic[:30]}",
+            }[outcome]
 
         try:
             ce = cognitive.create_element(
@@ -747,6 +799,7 @@ class DeliberationEngine:
                 source_agent_id=None,
                 metadata_json={
                     "deliberation_outcome": outcome,
+                    "deliberation_mode": "synthesis" if is_synthesis else "refutation",
                     "vote_summary": weighted_summary,
                     "key_arguments": key_args,
                     "topic": topic,
@@ -775,7 +828,40 @@ class DeliberationEngine:
                 "建立 outcome→trigger 关系失败 outcome_ce=%s trigger=%s",
                 ce_id, trigger_ce_id,
             )
+
+        # 综合博弈成功时：与 topic 中所有源 CE 建立 derives_from 关系
+        if is_synthesis and outcome in ("consensus", "majority"):
+            try:
+                source_ce_ids = [int(x) for x in re.findall(r"CE#(\d+)", topic)]
+            except Exception:
+                source_ce_ids = []
+            for src_id in source_ce_ids:
+                if src_id == trigger_ce_id:
+                    continue  # trigger 的关系已在前面建立
+                try:
+                    cognitive.create_relation(
+                        source_id=ce_id,
+                        target_id=src_id,
+                        relation_type="derives_from",
+                        weight=confidence,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[synthesis] 建立 derives_from 关系失败 outcome_ce=%s src=%s",
+                        ce_id, src_id,
+                    )
         return ce_id
+
+    @staticmethod
+    def _is_synthesis_mode(topic: str) -> bool:
+        """通过 topic 前缀识别建设性综合博弈。
+
+        与 :meth:`orchestrator.ATAOrchestrator._scan_and_trigger_synthesis_deliberation`
+        生成的议题保持一致：含「综合」与「统一结论」字样。
+        """
+        if not topic:
+            return False
+        return ("综合" in topic) and ("统一结论" in topic)
 
     @staticmethod
     def _summarize_key_arguments(

@@ -82,6 +82,12 @@ _DELIB_TRIGGER_CE_TYPES: set = {
 }
 #: 矛盾关系类型（出现这两种关系任一即视为存在矛盾）
 _CONTRADICTION_RELATIONS: set = {"contradicts", "refutes"}
+#: 建设性综合博弈：CE 簇最小成员数（≥3 才发起综合博弈）
+_SYNTHESIS_CLUSTER_MIN_SIZE: int = 3
+#: 建设性综合博弈：扫描最近 N 个 CE
+_SYNTHESIS_RECENT_CE_LIMIT: int = 50
+#: 建设性综合博弈：topic 中最多列出的 CE 数量
+_SYNTHESIS_TOPIC_MAX_CES: int = 5
 #: brain → 单角色思考触发周期内最多调度次数（防止角色霸占）
 _DISPATCH_PER_CYCLE: int = 1
 #: brain_loop 循环内异常时的统一冷静期
@@ -654,6 +660,14 @@ class ATAOrchestrator:
                 activity = True
         except Exception:
             logger.exception("矛盾扫描失败 brain=%s", brain_id)
+
+        # 5) 建设性综合博弈：仅在收敛/强制综合压力下扫描关系密集 CE 簇
+        if pressure_mode in ("converge", "force_synthesis"):
+            try:
+                if self._scan_and_trigger_synthesis_deliberation(brain_id):
+                    activity = True
+            except Exception:
+                logger.exception("综合博弈扫描失败 brain=%s", brain_id)
 
         return activity
 
@@ -1389,6 +1403,110 @@ class ATAOrchestrator:
                 trigger_ce_id=target_ce_id,
             )
             if triggered:
+                return True
+
+        return False
+
+    # ============================================================
+    # 建设性综合博弈：扫描关系密集的 CE 簇并发起综合博弈
+    # ============================================================
+    def _scan_and_trigger_synthesis_deliberation(self, brain_id: int) -> bool:
+        """扫描关系密集的 CE 簇，发起建设性综合博弈。
+
+        与 :meth:`_scan_and_trigger_deliberation`（推翻式博弈）互补：
+
+        1. 取最近 ``_SYNTHESIS_RECENT_CE_LIMIT`` 个 CE。
+        2. 查询它们之间的 ``supports`` / ``derives_from`` 关系。
+        3. 用 Union-Find 找连通子图，size ≥ ``_SYNTHESIS_CLUSTER_MIN_SIZE``。
+        4. 若簇中已包含 ``conclusion`` / ``consensus``（已被综合过）则跳过。
+        5. 用簇中最小 id 作为 ``trigger_ce_id``，借助
+           ``deliberations.uniq_active_deliberation`` 唯一索引天然去重。
+        6. 议题前缀 "是否应当将 CE#X, CE#Y, CE#Z 综合为一个统一结论？"
+           供 :class:`DeliberationEngine` 通过前缀识别 synthesis 模式。
+
+        :return: 是否成功触发了一场综合博弈。
+        """
+        try:
+            recent = cognitive.list_elements(brain_id, limit=_SYNTHESIS_RECENT_CE_LIMIT)
+        except Exception:
+            logger.exception("[synthesis-delib] list_elements 失败 brain=%s", brain_id)
+            return False
+        if not recent:
+            return False
+
+        recent_ids = {ce["id"] for ce in recent}
+        ce_type_map: Dict[int, str] = {ce["id"]: ce.get("type") for ce in recent}
+
+        try:
+            with _db.get_db() as conn:
+                rel_rows = conn.execute(
+                    "SELECT src_id, dst_id FROM cognitive_relations "
+                    "WHERE brain_id=? AND relation IN ('supports','derives_from')",
+                    (brain_id,),
+                ).fetchall()
+        except Exception:
+            logger.exception(
+                "[synthesis-delib] 查询 supports/derives_from 关系失败 brain=%s",
+                brain_id,
+            )
+            return False
+
+        # 仅保留两端都在 recent 中的边
+        edges = [
+            (r["src_id"], r["dst_id"]) for r in rel_rows
+            if r["src_id"] in recent_ids and r["dst_id"] in recent_ids
+        ]
+        if not edges:
+            return False
+
+        # Union-Find 求连通分量
+        parent: Dict[int, int] = {}
+
+        def _find(x: int) -> int:
+            parent.setdefault(x, x)
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def _union(a: int, b: int) -> None:
+            ra, rb = _find(a), _find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for a, b in edges:
+            _union(a, b)
+
+        clusters: Dict[int, List[int]] = {}
+        for node in list(parent.keys()):
+            clusters.setdefault(_find(node), []).append(node)
+
+        # 找出 size>=N 且不含 conclusion/consensus 的簇
+        for members in clusters.values():
+            if len(members) < _SYNTHESIS_CLUSTER_MIN_SIZE:
+                continue
+            types_in_cluster = {ce_type_map.get(mid) for mid in members}
+            if {"conclusion", "consensus"} & types_in_cluster:
+                continue
+
+            sorted_members = sorted(members)
+            trigger_ce_id = sorted_members[0]
+            shown = sorted_members[:_SYNTHESIS_TOPIC_MAX_CES]
+            ids_str = ", ".join(f"CE#{i}" for i in shown)
+            if len(sorted_members) > _SYNTHESIS_TOPIC_MAX_CES:
+                ids_str += f" 等 {len(sorted_members)} 个相关 CE"
+            topic = f"是否应当将 {ids_str} 综合为一个统一结论？"
+
+            triggered = self._trigger_deliberation(
+                brain_id=brain_id,
+                topic=topic,
+                trigger_ce_id=trigger_ce_id,
+            )
+            if triggered:
+                logger.info(
+                    "[synthesis-delib] brain=%s 触发综合博弈 cluster_size=%d trigger_ce=%s",
+                    brain_id, len(members), trigger_ce_id,
+                )
                 return True
 
         return False

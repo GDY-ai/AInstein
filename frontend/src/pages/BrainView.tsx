@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import * as d3 from 'd3'
-import { api } from '../api'
+import { api, generatePaper, getPaperStatus } from '../api'
 import type { CognitiveNode, KnowledgeGraph } from '../types'
 import ObserverPanel from '../components/ObserverPanel'
 
@@ -82,6 +82,66 @@ export default function BrainView() {
     typeof window !== 'undefined' ? window.innerWidth < 1100 : false,
   )
   const [activeFilters, setActiveFilters] = useState<string[]>([])
+
+  // ---------- 研究报告生成状态机 ----------
+  const [paperState, setPaperState] = useState<'idle' | 'processing' | 'done' | 'error'>('idle')
+  const [paperTaskId, setPaperTaskId] = useState<string | null>(null)
+  const [paperProgress, setPaperProgress] = useState<string>('')
+  const [paperDownloadUrl, setPaperDownloadUrl] = useState<string>('')
+  const [paperError, setPaperError] = useState<string>('')
+  const paperPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // 清理轮询 interval
+  useEffect(() => {
+    return () => {
+      if (paperPollRef.current) clearInterval(paperPollRef.current)
+    }
+  }, [])
+
+  async function handleGeneratePaper() {
+    try {
+      setPaperState('processing')
+      setPaperProgress('正在提交任务…')
+      setPaperError('')
+      const res = await generatePaper(bid)
+      setPaperTaskId(res.task_id)
+
+      // 启动轮询
+      if (paperPollRef.current) clearInterval(paperPollRef.current)
+      paperPollRef.current = setInterval(async () => {
+        try {
+          const status = await getPaperStatus(bid, res.task_id)
+          if (status.status === 'done') {
+            if (paperPollRef.current) clearInterval(paperPollRef.current)
+            setPaperState('done')
+            setPaperDownloadUrl(status.download_url || '')
+            setPaperProgress('')
+          } else if (status.status === 'error') {
+            if (paperPollRef.current) clearInterval(paperPollRef.current)
+            setPaperState('error')
+            setPaperError(status.error || '生成失败')
+            setPaperProgress('')
+          } else {
+            setPaperProgress(status.progress || '正在生成中…')
+          }
+        } catch (e: any) {
+          if (paperPollRef.current) clearInterval(paperPollRef.current)
+          setPaperState('error')
+          setPaperError(e?.message || '轮询状态失败')
+          setPaperProgress('')
+        }
+      }, 3000)
+    } catch (e: any) {
+      setPaperState('error')
+      setPaperError(e?.message || '提交任务失败')
+    }
+  }
+
+  function handleDownloadPaper() {
+    if (paperDownloadUrl) {
+      window.open(paperDownloadUrl, '_blank')
+    }
+  }
 
   // 监听窗口尺寸 → 切换观察员面板的布局（右侧 / 底部折叠）
   useEffect(() => {
@@ -586,6 +646,29 @@ export default function BrainView() {
             </div>
           </div>
         </div>
+
+        {/* 研究报告按钮 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {paperState === 'error' && (
+            <span style={{ fontSize: 11, color: '#ef4444', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {paperError}
+            </span>
+          )}
+          {paperState === 'idle' || paperState === 'error' ? (
+            <button onClick={handleGeneratePaper} style={paperBtnStyle}>
+              📄 生成研究报告
+            </button>
+          ) : paperState === 'processing' ? (
+            <button disabled style={{ ...paperBtnStyle, opacity: 0.7, cursor: 'not-allowed' }}>
+              <span className="paper-spinner" />
+              {paperProgress || '生成中…'}
+            </button>
+          ) : paperState === 'done' ? (
+            <button onClick={handleDownloadPaper} style={{ ...paperBtnStyle, background: '#166534', borderColor: '#22c55e' }}>
+              📥 下载研究报告(PDF)
+            </button>
+          ) : null}
+        </div>
       </header>
 
       {error && (
@@ -795,6 +878,10 @@ export default function BrainView() {
           0%, 100% { opacity: 0.25; transform: scale(1); }
           50%      { opacity: 0.55; transform: scale(1.18); }
         }
+        @keyframes paperSpin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
         circle.seed-core {
           animation: seedCorePulse 2.4s ease-in-out infinite;
           transform-box: fill-box;
@@ -804,6 +891,17 @@ export default function BrainView() {
           animation: seedHaloPulse 2.4s ease-in-out infinite;
           transform-box: fill-box;
           transform-origin: center;
+        }
+        .paper-spinner {
+          display: inline-block;
+          width: 12px;
+          height: 12px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: paperSpin 0.8s linear infinite;
+          margin-right: 6px;
+          vertical-align: middle;
         }
       `}</style>
     </div>
@@ -992,4 +1090,19 @@ const observerWrap: React.CSSProperties = {
   overflow: 'hidden',
   minHeight: 0,
   boxSizing: 'border-box',
+}
+const paperBtnStyle: React.CSSProperties = {
+  background: 'var(--bg2)',
+  border: '1px solid var(--border)',
+  color: '#e2e8f0',
+  borderRadius: 8,
+  padding: '8px 16px',
+  cursor: 'pointer',
+  fontSize: 13,
+  fontWeight: 500,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  transition: 'all .15s ease',
+  whiteSpace: 'nowrap',
 }

@@ -202,3 +202,12 @@ export const api = {
 // 命名导出方便直接 import
 export const fetchKnowledgeGraph = (brainId: number) => api.getKnowledgeGraph(brainId);
 export const fetchBrainFrontier = (brainId: number) => api.getBrainFrontier(brainId);
+
+// 研究报告生成
+export async function generatePaper(brainId: number): Promise<{ task_id: string; status: string }> {
+  return request(`/brains/${brainId}/generate-paper`, { method: 'POST' });
+}
+
+export async function getPaperStatus(brainId: number, taskId: string): Promise<{ status: string; progress?: string; download_url?: string; error?: string }> {
+  return request(`/brains/${brainId}/paper-status/${taskId}`);
+}

@@ -17,7 +17,17 @@
 - [tools/data_access.py](file://tools/data_access.py)
 - [tools/stats.py](file://tools/stats.py)
 - [tools/web_data.py](file://tools/web_data.py)
+- [frontend/src/pages/BrainView.tsx](file://frontend/src/pages/BrainView.tsx)
+- [frontend/src/types.ts](file://frontend/src/types.ts)
+- [frontend/src/api.ts](file://frontend/src/api.ts)
 </cite>
+
+## 更新摘要
+**变更内容**
+- 新增知识图谱API的total_nodes和total_edges字段支持
+- 实现无限制加载功能，支持limit=None时返回所有数据
+- 增强前端统计显示，提供真实总量与已加载数量的对比
+- 优化数据库计数查询，提升大数据量场景下的性能
 
 ## 目录
 1. [简介](#简介)
@@ -45,11 +55,16 @@ graph TB
 subgraph "前端层"
 FE[React + Vite + TypeScript]
 API[前端API模块]
+BV[大脑视图页面]
+ENDPOINT[知识图谱端点]
+STATS[统计显示]
 end
 subgraph "后端层"
 APP[Flask应用]
 AUTH[认证模块]
 ROUTES[路由控制器]
+KG[Knowledge Graph API]
+COUNT[计数查询]
 end
 subgraph "业务逻辑层"
 AGENTS[Agent代理层]
@@ -61,9 +76,14 @@ subgraph "基础设施层"
 DB[(SQLite数据库)]
 CONFIG[配置管理]
 EVENTBUS[事件总线]
+COUNTQ[计数查询优化]
 end
 FE --> API
-API --> APP
+API --> BV
+BV --> ENDPOINT
+ENDPOINT --> KG
+KG --> COUNT
+COUNT --> COUNTQ
 APP --> AUTH
 APP --> ROUTES
 ROUTES --> AGENTS
@@ -83,6 +103,8 @@ EVENTBUS --> AGENTS
 - [app.py:1-1054](file://app.py#L1-L1054)
 - [database.py:1-877](file://database.py#L1-L877)
 - [config.py:1-11](file://config.py#L1-L11)
+- [frontend/src/pages/BrainView.tsx:144-165](file://frontend/src/pages/BrainView.tsx#L144-L165)
+- [frontend/src/types.ts:154-161](file://frontend/src/types.ts#L154-L161)
 
 **章节来源**
 - [README.md:186-212](file://README.md#L186-L212)
@@ -152,6 +174,7 @@ subgraph "用户交互层"
 LOGIN[用户登录]
 CREATE[创建大脑]
 VIEW[查看结果]
+KGVIEW[知识图谱视图]
 end
 subgraph "认证授权"
 JWT[JWT Token]
@@ -163,15 +186,19 @@ BRAIN[大脑管理]
 CE[Cognitive Elements]
 REL[Cognitive Relations]
 DELIB[博弈引擎]
+KGAPI[知识图谱API]
+COUNTAPI[计数API]
 end
 subgraph "数据存储层"
 SQLITE[SQLite]
 EVENTS[事件队列]
 SNAPSHOTS[快照]
+COUNTCACHE[计数缓存]
 end
 LOGIN --> JWT
 CREATE --> BRAIN
 VIEW --> CE
+KGVIEW --> KGAPI
 JWT --> AUTHZ
 AUTHZ --> BRAIN
 BRAIN --> CE
@@ -184,12 +211,15 @@ REL --> SQLITE
 DELIB --> SQLITE
 EVENTS --> SQLITE
 SNAPSHOTS --> SQLITE
+KGAPI --> COUNTAPI
+COUNTAPI --> COUNTCACHE
 ```
 
 **图表来源**
 - [app.py:44-282](file://app.py#L44-L282)
 - [database.py:105-285](file://database.py#L105-L285)
 - [auth.py:122-151](file://auth.py#L122-L151)
+- [cognitive.py:327-406](file://cognitive.py#L327-L406)
 
 ## 详细组件分析
 
@@ -315,6 +345,44 @@ REL3 --> END
 - [engines/three_round.py:75-81](file://engines/three_round.py#L75-L81)
 - [engines/three_round.py:189-213](file://engines/three_round.py#L189-L213)
 
+### 知识图谱API增强
+
+**更新** 新增total_nodes和total_edges字段支持，实现无限制加载功能
+
+知识图谱API现在提供完整的图谱数据，包括真实总量信息：
+
+```mermaid
+sequenceDiagram
+participant FE as 前端
+participant API as 知识图谱API
+participant CG as 认知图谱函数
+participant DB as 数据库
+participant CNT as 计数查询
+FE->>API : GET /knowledge-graph?limit=None
+API->>CG : get_knowledge_graph(brain_id, limit=None)
+CG->>DB : 查询所有CELIMIT -1
+DB-->>CG : 返回所有节点
+CG->>DB : 查询所有关系
+DB-->>CG : 返回所有边
+CG->>CNT : count_cognitive_elements(brain_id)
+CNT-->>CG : 返回真实节点总数
+CG->>CNT : count_cognitive_relations(brain_id)
+CNT-->>CG : 返回真实关系总数
+CG-->>API : {nodes, edges, total_nodes, total_edges}
+API-->>FE : JSON响应
+FE->>FE : 显示真实总量与已加载数量对比
+```
+
+**图表来源**
+- [app.py:654-673](file://app.py#L654-L673)
+- [cognitive.py:327-406](file://cognitive.py#L327-L406)
+- [database.py:627-649](file://database.py#L627-L649)
+
+**章节来源**
+- [app.py:654-673](file://app.py#L654-L673)
+- [cognitive.py:327-406](file://cognitive.py#L327-L406)
+- [database.py:627-649](file://database.py#L627-L649)
+
 ### 工具系统
 
 系统集成了多种数据分析工具：
@@ -359,6 +427,7 @@ subgraph "前端依赖"
 REACT[React 18]
 VITE[Vite]
 TYPESCRIPT[TypeScript]
+D3[D3.js]
 end
 app.py --> FLASK
 app.py --> SQLITE
@@ -376,6 +445,7 @@ engines/*.py --> SCIPY
 frontend/* --> REACT
 frontend/* --> VITE
 frontend/* --> TYPESCRIPT
+frontend/* --> D3
 ```
 
 **图表来源**
@@ -390,12 +460,16 @@ frontend/* --> TYPESCRIPT
 
 ### 数据库优化
 
+**更新** 新增计数查询优化和无限制加载支持
+
 系统采用SQLite作为主要存储，通过以下方式优化性能：
 
 1. **事务管理**：使用上下文管理器确保事务完整性
 2. **索引优化**：为常用查询字段建立索引
 3. **连接池**：复用数据库连接减少开销
 4. **批量操作**：支持批量插入和更新操作
+5. **计数查询优化**：新增专用计数函数，避免全表扫描
+6. **无限制加载支持**：通过LIMIT -1实现无限制数据加载
 
 ### 缓存策略
 
@@ -410,10 +484,12 @@ subgraph "缓存策略"
 QUERY[查询结果缓存]
 SESSION[会话状态缓存]
 MODEL[模型响应缓存]
+COUNT[计数结果缓存]
 end
 QUERY --> REDIS
 SESSION --> MEMORY
 MODEL --> DISK
+COUNT --> MEMORY
 ```
 
 ### 并发处理
@@ -435,6 +511,8 @@ MODEL --> DISK
 | LLM调用失败 | API调用异常 | 验证API密钥和网络连接 |
 | Agent执行错误 | 研究会话失败 | 检查数据集可用性和工具配置 |
 | 博弈异常 | 参与者不足 | 确认Agent实例状态和配额限制 |
+| 知识图谱加载缓慢 | 大数据量加载超时 | 使用limit参数进行分页加载 |
+| 计数查询失败 | total_nodes/total_edges为null | 检查数据库连接和权限 |
 
 ### 调试工具
 
@@ -471,6 +549,14 @@ AInstein项目展现了构建自主思考系统的完整思路和技术实现。
 3. **认知建模**：完整的认知元素体系支持复杂的思维过程
 4. **工具集成**：丰富的数据分析工具支持实证研究
 5. **可视化支持**：为后续的知识图谱可视化奠定基础
+6. **性能优化**：支持无限制加载和计数查询优化
+7. **实时统计**：提供真实总量与已加载数量的对比显示
+
+**更新亮点**：
+- **知识图谱API增强**：新增total_nodes和total_edges字段，提供真实数据总量信息
+- **无限制加载支持**：当limit=None时，后端返回该大脑的所有CE和relations
+- **前端统计优化**：显示真实总量与已加载数量的对比，提升用户体验
+- **计数查询优化**：新增专用计数函数，提升大数据量场景下的性能表现
 
 未来发展方向包括：
 
@@ -479,5 +565,6 @@ AInstein项目展现了构建自主思考系统的完整思路和技术实现。
 3. **博弈引擎**：完善共识机制和置信度传播
 4. **可视化**：开发力导向图和上帝视角界面
 5. **用户系统**：实现封闭观察模式
+6. **性能监控**：添加详细的性能指标和监控告警
 
 该项目为探索机器自主思考提供了宝贵的实践经验和理论基础，值得进一步深入研究和开发。
