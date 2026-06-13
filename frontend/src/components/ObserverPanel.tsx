@@ -147,7 +147,7 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
 
           {/* 主内容 */}
           {latest && body && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div>
                 <div style={kicker}>OBSERVER · LOG #{latest.id}</div>
                 <h3 style={summaryTitle}>{latest.title || '尚未命名的观察'}</h3>
@@ -197,17 +197,17 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
 
               {/* 次要字段 */}
               {body.deliberation_dynamics && (
-                <Section label="博弈动态" mutedTitle>
+                <Section label="博弈动态">
                   <p style={subText}>{body.deliberation_dynamics}</p>
                 </Section>
               )}
               {body.frontier_movement && (
-                <Section label="认知边界" mutedTitle>
+                <Section label="认知边界">
                   <p style={subText}>{body.frontier_movement}</p>
                 </Section>
               )}
               {body.health_assessment && (
-                <Section label="整体评价" mutedTitle>
+                <Section label="整体评价">
                   <p style={subText}>{body.health_assessment}</p>
                 </Section>
               )}
@@ -223,7 +223,7 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
           )}
 
           {/* 历史折叠 */}
-          <div style={{ marginTop: 18, borderTop: '1px dashed rgba(140,150,200,0.18)', paddingTop: 12 }}>
+          <div style={{ marginTop: 10, borderTop: '1px dashed rgba(140,150,200,0.18)', paddingTop: 8 }}>
             <button onClick={() => setHistoryOpen(o => !o)} style={historyToggle}>
               <span>{historyOpen ? '收起历史' : '查看历史'}</span>
               <span style={{ opacity: 0.5, fontSize: 11 }}>{historyOpen ? '▴' : '▾'}</span>
@@ -397,9 +397,10 @@ const headerBtn: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   width: '100%',
-  padding: '14px 16px',
+  padding: '10px 14px',
   cursor: 'pointer',
   borderBottom: '1px solid rgba(99,102,241,0.12)',
+  flexShrink: 0,
 }
 
 const titleEmoji: React.CSSProperties = {
@@ -438,11 +439,11 @@ const chevron = (open: boolean): React.CSSProperties => ({
 })
 
 const bodyStyle: React.CSSProperties = {
-  padding: '14px 16px 16px',
-  overflowY: 'auto',
+  padding: '10px 14px 12px',
+  overflow: 'hidden',
   flex: 1,
-  fontSize: 13,
-  lineHeight: 1.6,
+  fontSize: 12,
+  lineHeight: 1.5,
   color: 'var(--text2)',
 }
 
@@ -465,10 +466,10 @@ const kicker: React.CSSProperties = {
 
 const summaryTitle: React.CSSProperties = {
   margin: 0,
-  fontSize: 16,
+  fontSize: 14,
   fontWeight: 600,
   color: 'var(--text)',
-  lineHeight: 1.4,
+  lineHeight: 1.3,
 }
 
 const metaRow: React.CSSProperties = {
@@ -476,7 +477,7 @@ const metaRow: React.CSSProperties = {
   justifyContent: 'space-between',
   alignItems: 'center',
   gap: 12,
-  marginTop: 6,
+  marginTop: 4,
   fontSize: 11,
   color: 'var(--text2)',
 }
@@ -493,14 +494,14 @@ const importanceMeter = (v: number): React.CSSProperties => ({
 
 const narrativeStyle: React.CSSProperties = {
   margin: 0,
-  fontSize: 14,
-  lineHeight: 1.7,
+  fontSize: 13,
+  lineHeight: 1.55,
   color: 'var(--text)',
   background:
     'linear-gradient(180deg, rgba(99,102,241,0.07), rgba(168,85,247,0.04))',
   border: '1px solid rgba(99,102,241,0.18)',
-  borderRadius: 8,
-  padding: '12px 14px',
+  borderRadius: 6,
+  padding: '8px 10px',
   whiteSpace: 'pre-wrap',
 }
 
@@ -508,13 +509,13 @@ const sectionLabel: React.CSSProperties = {
   fontSize: 10,
   letterSpacing: 1.5,
   color: 'rgba(196,181,253,0.7)',
-  marginBottom: 6,
+  marginBottom: 4,
   textTransform: 'uppercase' as const,
 }
 
 const chipStyle: React.CSSProperties = {
-  fontSize: 12,
-  padding: '4px 10px',
+  fontSize: 11,
+  padding: '2px 8px',
   borderRadius: 999,
   background: 'rgba(99,102,241,0.12)',
   color: '#c4b5fd',
@@ -527,25 +528,25 @@ const listStyle: React.CSSProperties = {
   listStyle: 'none',
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
+  gap: 4,
 }
 
 const listItem: React.CSSProperties = {
   display: 'flex',
-  gap: 10,
-  fontSize: 13,
+  gap: 8,
+  fontSize: 12,
   color: 'var(--text2)',
-  lineHeight: 1.55,
+  lineHeight: 1.45,
 }
 
 const bullet: React.CSSProperties = {
-  marginTop: 7,
-  width: 6,
-  height: 6,
+  marginTop: 5,
+  width: 5,
+  height: 5,
   borderRadius: 3,
   background: 'linear-gradient(135deg, #a855f7, #6366f1)',
   flexShrink: 0,
-  boxShadow: '0 0 8px rgba(168,85,247,0.5)',
+  boxShadow: '0 0 6px rgba(168,85,247,0.4)',
 }
 
 const citeStyle: React.CSSProperties = {
@@ -560,7 +561,7 @@ const subText: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
   color: 'var(--text2)',
-  lineHeight: 1.55,
+  lineHeight: 1.45,
   whiteSpace: 'pre-wrap',
 }
 
@@ -639,9 +640,10 @@ const footerRow: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: 8,
-  marginTop: 14,
-  paddingTop: 10,
+  marginTop: 10,
+  paddingTop: 8,
   borderTop: '1px solid rgba(99,102,241,0.12)',
+  flexShrink: 0,
 }
 
 const generateBtn = (loading: boolean): React.CSSProperties => ({

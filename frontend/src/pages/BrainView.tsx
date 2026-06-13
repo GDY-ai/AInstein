@@ -498,7 +498,7 @@ export default function BrainView() {
       )}
 
       <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: isNarrow ? 'column' : 'row', minHeight: 0 }}>
-        <div ref={containerRef} style={{ flex: 1, position: 'relative', background: bgGradient, minHeight: 0 }}>
+        <div ref={containerRef} style={{ flex: '1 1 50%', position: 'relative', background: bgGradient, minHeight: 0, minWidth: 400 }}>
           <svg ref={svgRef} style={{ width: '100%', height: '100%', display: 'block' }}>
             <defs>
               <marker id="arrow-green" viewBox="0 -5 10 10" refX={20} refY={0} markerWidth={6} markerHeight={6} orient="auto">
@@ -549,7 +549,9 @@ export default function BrainView() {
         <div
           style={{
             ...observerWrap,
-            width: isNarrow ? '100%' : 380,
+            flex: isNarrow ? 'none' : '1 1 50%',
+            width: isNarrow ? '100%' : 'auto',
+            minWidth: isNarrow ? 'auto' : 450,
             height: isNarrow ? 'auto' : 'auto',
             maxHeight: isNarrow ? '50vh' : 'none',
             borderLeft: isNarrow ? 'none' : '1px solid var(--border)',
@@ -831,7 +833,6 @@ const metaStyle: React.CSSProperties = {
   wordBreak: 'break-all',
 }
 const observerWrap: React.CSSProperties = {
-  flexShrink: 0,
   background: 'rgba(11,13,22,0.4)',
   padding: 12,
   display: 'flex',
