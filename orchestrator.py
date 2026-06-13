@@ -86,6 +86,12 @@ _CONTRADICTION_RELATIONS: set = {"contradicts", "refutes"}
 _DISPATCH_PER_CYCLE: int = 1
 #: brain_loop 循环内异常时的统一冷静期
 _LOOP_ERROR_COOLDOWN: float = 5.0
+#: 共识收敛阈值 —— synthesizer 产出的 conclusion 置信度 > 该值即自动停止
+_CONVERGENCE_CONFIDENCE_THRESHOLD: float = 0.9
+#: 触发收敛的角色 key
+_CONVERGENCE_ROLE_KEY: str = "synthesizer"
+#: 触发收敛的 CE 类型
+_CONVERGENCE_CE_TYPE: str = "conclusion"
 
 
 # ============================================================
@@ -499,6 +505,15 @@ class ATAOrchestrator:
                 time.sleep(_LOOP_ERROR_COOLDOWN)
                 continue
 
+            # 共识收敛检测：每个 think_cycle 结束后检查一次
+            # 若 synthesizer 产出高置信度 conclusion → 自动停止思考
+            try:
+                if self._check_convergence(brain_id):
+                    self._handle_convergence(brain_id)
+                    return
+            except Exception:
+                logger.exception("brain=%s 共识收敛检测异常", brain_id)
+
             # 周期性发布 cycle.tick 事件（每 5 个循环一次，给观察员提供心跳）
             if state.cycle_count % 5 == 0:
                 try:
@@ -562,6 +577,123 @@ class ATAOrchestrator:
             logger.exception("矛盾扫描失败 brain=%s", brain_id)
 
         return activity
+
+    # ============================================================
+    # 共识收敛检测 & 自动停止
+    # ============================================================
+    def _check_convergence(self, brain_id: int) -> bool:
+        """检查大脑是否达到共识收敛条件。
+
+        条件：存在 ``synthesizer`` 角色产出的 ``conclusion`` 类型 CE，
+        且 ``confidence`` 严格大于 :data:`_CONVERGENCE_CONFIDENCE_THRESHOLD`。
+
+        注意数据库字段名（务必与 schema 一致）：
+            - ``cognitive_elements.type``（不是 ce_type）
+            - ``agent_instances.role_key``（不是 role）
+
+        :return: True 表示已达成共识，应当停止思考循环。
+        """
+        try:
+            with _db.get_db() as conn:
+                row = conn.execute(
+                    """
+                    SELECT ce.id, ce.confidence
+                    FROM cognitive_elements ce
+                    JOIN agent_instances ai ON ce.created_by_agent_id = ai.id
+                    WHERE ce.brain_id = ?
+                      AND ce.type = ?
+                      AND ce.confidence > ?
+                      AND ai.role_key = ?
+                    ORDER BY ce.id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        brain_id,
+                        _CONVERGENCE_CE_TYPE,
+                        _CONVERGENCE_CONFIDENCE_THRESHOLD,
+                        _CONVERGENCE_ROLE_KEY,
+                    ),
+                ).fetchone()
+        except Exception:
+            logger.exception("_check_convergence 查询失败 brain=%s", brain_id)
+            return False
+        return row is not None
+
+    def _handle_convergence(self, brain_id: int) -> None:
+        """收敛达成时的统一处理：状态切换 + DB 持久化 + 事件发布。
+
+        与管理员手动 ``pause`` 不同，本路径把 DB 状态写为 ``completed``，
+        进程内状态切到 ``idle`` 并令 brain_loop 自然退出。
+        """
+        state = self.brains.get(brain_id)
+        if state is None:
+            logger.warning("_handle_convergence: brain=%s 状态丢失", brain_id)
+            return
+
+        # 取最新一条达成共识的 CE 详细信息用于日志/事件 payload
+        ce_id: Optional[int] = None
+        ce_confidence: Optional[float] = None
+        try:
+            with _db.get_db() as conn:
+                row = conn.execute(
+                    """
+                    SELECT ce.id, ce.confidence
+                    FROM cognitive_elements ce
+                    JOIN agent_instances ai ON ce.created_by_agent_id = ai.id
+                    WHERE ce.brain_id = ?
+                      AND ce.type = ?
+                      AND ce.confidence > ?
+                      AND ai.role_key = ?
+                    ORDER BY ce.confidence DESC, ce.id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        brain_id,
+                        _CONVERGENCE_CE_TYPE,
+                        _CONVERGENCE_CONFIDENCE_THRESHOLD,
+                        _CONVERGENCE_ROLE_KEY,
+                    ),
+                ).fetchone()
+                if row is not None:
+                    ce_id = row["id"]
+                    ce_confidence = row["confidence"]
+        except Exception:
+            logger.exception("_handle_convergence 查询代表 CE 失败 brain=%s", brain_id)
+
+        # 1) 进程内状态：切到 idle，唤醒以让循环立刻感知（return 之前其实已结束）
+        with state.state_lock:
+            state.status = "idle"
+            state.wake.set()
+
+        # 2) DB 持久化：state='completed'，区别于人工 paused
+        try:
+            update_brain_state(brain_id, "completed", last_active_at=_now_iso())
+        except Exception:
+            logger.exception("update_brain_state(completed) 失败 brain=%s", brain_id)
+
+        # 3) 事件通知（前端 / 观察员 / 其他订阅者）
+        try:
+            self.event_bus.publish(
+                event_type=EventTypes.BRAIN_PAUSED,
+                brain_id=brain_id,
+                payload={
+                    "reason": "consensus_convergence",
+                    "message": "大脑已达成高置信度共识结论，自动停止思考",
+                    "ce_id": ce_id,
+                    "confidence": ce_confidence,
+                    "threshold": _CONVERGENCE_CONFIDENCE_THRESHOLD,
+                    "role": _CONVERGENCE_ROLE_KEY,
+                    "ce_type": _CONVERGENCE_CE_TYPE,
+                },
+            )
+        except Exception:
+            logger.exception("发布共识收敛 BRAIN_PAUSED 失败 brain=%s", brain_id)
+
+        logger.info(
+            "brain=%s 共识收敛自动停止 [auto-convergence] "
+            "synthesizer.conclusion ce=%s confidence=%s > %.2f",
+            brain_id, ce_id, ce_confidence, _CONVERGENCE_CONFIDENCE_THRESHOLD,
+        )
 
     # ============================================================
     # 事件 → Agent 分派
