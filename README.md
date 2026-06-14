@@ -190,7 +190,7 @@ Agent 提议使用工具
 | 组件 | 选型 |
 |---|---|
 | Web 框架 | Flask + Gunicorn（2 workers，timeout 300s）|
-| 数据库 | SQLite（WAL 模式），路径 `/opt/ainstein/data/ainstein.db` |
+| 数据库 | SQLite（WAL 模式），路径 `/srv/ainstein/data/ainstein.db` |
 | LLM | DashScope Anthropic 兼容 API（默认 **`kimi-k2.6`**）|
 | 调度 | 自研事件总线（[event_bus.py](event_bus.py)）+ APScheduler（兼容层）|
 | PDF 渲染 | **WeasyPrint** + Noto CJK |
