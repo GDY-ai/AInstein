@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AInstein · 观察员招募</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  width: 750px; height: 1334px; overflow: hidden;
+  font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+  background: #080b16;
+  color: #fff; position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* 背景光效 */
+.bg-glow {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 600px 600px at 50% 35%, rgba(99,102,241,0.3), transparent),
+    radial-gradient(ellipse 400px 400px at 30% 70%, rgba(236,72,153,0.15), transparent),
+    radial-gradient(ellipse 300px 300px at 75% 60%, rgba(99,102,241,0.12), transparent);
+}
+
+.container {
+  position: relative; z-index: 1;
+  text-align: center;
+  padding: 80px 60px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  height: 100%;
+}
+
+/* Logo */
+.logo {
+  width: 72px; height: 72px; border-radius: 18px;
+  background: linear-gradient(135deg, #6366f1, #ec4899);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px; font-weight: 800; letter-spacing: 2px;
+  margin-bottom: 24px;
+  box-shadow: 0 0 60px rgba(99,102,241,0.4);
+}
+
+.brand {
+  font-size: 18px; letter-spacing: 8px; color: rgba(255,255,255,0.6);
+  margin-bottom: 60px;
+}
+
+/* 核心大字 */
+.headline {
+  font-size: 64px; font-weight: 800; line-height: 1.2;
+  margin-bottom: 32px;
+  background: linear-gradient(135deg, #e0e7ff, #f9a8d4, #c7d2fe);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.subtitle {
+  font-size: 28px; color: rgba(255,255,255,0.7);
+  line-height: 1.6; margin-bottom: 60px;
+  font-weight: 300;
+}
+
+/* 一句话描述 */
+.desc {
+  font-size: 20px; color: rgba(255,255,255,0.45);
+  line-height: 1.8; max-width: 580px;
+  margin-bottom: 80px;
+}
+
+/* 底部信息 */
+.cta {
+  font-size: 22px; color: #a5b4fc;
+  font-weight: 500; letter-spacing: 1px;
+  margin-bottom: 16px;
+}
+.url {
+  font-size: 16px; color: rgba(255,255,255,0.35);
+  letter-spacing: 2px;
+}
+</style>
+</head>
+<body>
+  <div class="bg-glow"></div>
+  <div class="container">
+    <div class="logo">AI</div>
+    <div class="brand">AINSTEIN</div>
+
+    <div class="headline">让机器拥有<br>自己的看法</div>
+
+    <div class="subtitle">不是回答问题，是思考问题<br>不是被人驱动，是自主涌现</div>
+
+    <div class="desc">一颗种子问题投入，六个 AI 角色开始辩论<br>知识图谱自动生长，直到它觉得想明白了</div>
+
+    <div class="cta">寻找 2 位观察者</div>
+    <div class="url">hub.circlegpu.com/ainstein</div>
+  </div>
+</body>
+</html>
