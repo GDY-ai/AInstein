@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import * as d3 from 'd3'
 import { api, generatePaper, getPaperStatus } from '../api'
-import type { CognitiveNode, KnowledgeGraph } from '../types'
+import type { Brain, CognitiveNode, KnowledgeGraph, ThinkingSummary } from '../types'
 import ObserverPanel from '../components/ObserverPanel'
 
 // ---------- 类型 ----------
@@ -32,6 +32,7 @@ const CE_COLORS: Record<string, string> = {
   insight: '#f97316',
   consensus: '#fbbf24',
   dissent: '#dc2626',
+  tool_gap: '#a78bfa',
 }
 
 const CE_LABELS: Record<string, string> = {
@@ -47,6 +48,7 @@ const CE_LABELS: Record<string, string> = {
   insight: '洞察',
   consensus: '共识',
   dissent: '异见',
+  tool_gap: '工具缺口',
 }
 
 const REL_LABELS: Record<string, string> = {
@@ -82,6 +84,13 @@ export default function BrainView() {
     typeof window !== 'undefined' ? window.innerWidth < 1100 : false,
   )
   const [activeFilters, setActiveFilters] = useState<string[]>([])
+
+  // ---------- 大脑信息 + 思考总结 ----------
+  const [brain, setBrain] = useState<Brain | null>(null)
+  const [thinkingSummary, setThinkingSummary] = useState<ThinkingSummary | null>(null)
+  const [, setSummaryLoading] = useState(false)
+  const [summaryExpanded, setSummaryExpanded] = useState(false)
+  const brainState = brain?.state
 
   // ---------- 研究报告生成状态机 ----------
   const [paperState, setPaperState] = useState<'idle' | 'processing' | 'done' | 'error'>('idle')
@@ -221,6 +230,48 @@ export default function BrainView() {
     const t = setInterval(load, 10000)
     return () => { alive = false; clearInterval(t) }
   }, [bid])
+
+  // ---------- 拉取 brain 元信息（轮询，用于检测 state 变化） ----------
+  useEffect(() => {
+    if (!bid || Number.isNaN(bid)) return
+    let alive = true
+    async function loadBrain() {
+      try {
+        const b = await api.getBrain(bid)
+        if (!alive) return
+        setBrain(b)
+      } catch {
+        /* 忽略：brain 元信息失败不影响图谱展示 */
+      }
+    }
+    loadBrain()
+    const t = setInterval(loadBrain, 10000)
+    return () => { alive = false; clearInterval(t) }
+  }, [bid])
+
+  // ---------- 当 brain 进入 paused/completed 时，拉取"想明白了什么"总结 ----------
+  useEffect(() => {
+    if (!bid || Number.isNaN(bid)) return
+    if (brainState !== 'paused' && brainState !== 'completed') {
+      // 思考中 / 未启动 / 归档 — 不展示总结
+      setThinkingSummary(null)
+      return
+    }
+    let alive = true
+    async function loadSummary() {
+      setSummaryLoading(true)
+      try {
+        const s = await api.getThinkingSummary(bid)
+        if (!alive) return
+        setThinkingSummary(s)
+      } catch {
+        if (alive) setThinkingSummary(null)
+      } finally {
+        if (alive) setSummaryLoading(false)
+      }
+    }
+    loadSummary()
+  }, [bid, brainState])
 
   // ---------- 节点统计 ----------
   const stats = useMemo(() => {
@@ -675,6 +726,80 @@ export default function BrainView() {
         <div style={{ padding: '6px 24px', background: '#ef444422', color: '#ef4444', fontSize: 12 }}>{error}</div>
       )}
 
+      {thinkingSummary && (brainState === 'paused' || brainState === 'completed') && (
+        <div style={summaryCard}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={summaryCardTitle}>🧠 大脑想明白了什么</h3>
+            <button
+              onClick={() => setSummaryExpanded(e => !e)}
+              style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 12 }}
+            >
+              {summaryExpanded ? '收起 ▲' : '展开详情 ▼'}
+            </button>
+          </div>
+
+          {/* 核心答案 - 始终显示 */}
+          <div style={coreAnswerStyle}>
+            {thinkingSummary.core_answer}
+          </div>
+
+          {/* 展开后的详细内容 */}
+          {summaryExpanded && (
+            <>
+              {/* 关键洞察 */}
+              {thinkingSummary.key_insights.length > 0 && (
+                <div style={sectionStyle}>
+                  <h4 style={sectionTitle}>💡 关键洞察</h4>
+                  <ul style={insightList}>
+                    {thinkingSummary.key_insights.map((insight, i) => (
+                      <li key={i} style={insightItem}>
+                        <span style={{ flex: 1, lineHeight: 1.6, wordBreak: 'break-word' }}>{insight.summary}</span>
+                        <span style={ceRef}>CE#{insight.ce_id} ({(insight.confidence * 100).toFixed(0)}%)</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* 被否定的假说 */}
+              {thinkingSummary.refuted.length > 0 && (
+                <div style={sectionStyle}>
+                  <h4 style={sectionTitle}>❌ 被否定的假说</h4>
+                  <ul style={refutedList}>
+                    {thinkingSummary.refuted.map((r, i) => (
+                      <li key={i} style={refutedItem}>
+                        <span style={{ textDecoration: 'line-through', opacity: 0.7 }}>{r.claim}</span>
+                        <span style={ceRef}>CE#{r.ce_id}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* 开放问题 */}
+              {thinkingSummary.open_questions.length > 0 && (
+                <div style={sectionStyle}>
+                  <h4 style={sectionTitle}>❓ 尚存问题</h4>
+                  <ul style={openQList}>
+                    {thinkingSummary.open_questions.map((q, i) => (
+                      <li key={i}>{q}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* 方法论突破 */}
+              {thinkingSummary.methodology_note && (
+                <div style={sectionStyle}>
+                  <h4 style={sectionTitle}>🔬 方法论突破</h4>
+                  <p style={methodNote}>{thinkingSummary.methodology_note}</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: isNarrow ? 'column' : 'row', minHeight: 0 }}>
         <div ref={containerRef} style={{ flex: '1 1 50%', position: 'relative', background: bgGradient, minHeight: 0, minWidth: 400 }}>
           {/* CE 类型筛选 toolbar */}
@@ -753,15 +878,6 @@ export default function BrainView() {
             </div>
           )}
 
-          <div style={legendStyle}>
-            <div style={{ fontSize: 10, color: 'var(--text2)', marginBottom: 4, letterSpacing: 1 }}>关系</div>
-            <LegendLine color="#22c55e" label="支持 / 推导" />
-            <LegendLine color="#ef4444" label="反驳 / 矛盾" dashed />
-            <LegendLine color="#5b6175" label="其它关联" />
-            <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 8, lineHeight: 1.6 }}>
-              滚轮缩放 · 拖动节点 · 点击高亮
-            </div>
-          </div>
         </div>
 
         {/* 观察员视角面板 — 占满父级高度，内部自滚动 */}
@@ -778,7 +894,7 @@ export default function BrainView() {
           }}
           onClick={e => e.stopPropagation()}
         >
-          <ObserverPanel brainId={bid} defaultOpen={!isNarrow} />
+          <ObserverPanel brainId={bid} defaultOpen={!isNarrow} brainState={brainState} />
         </div>
 
         {selected && (
@@ -1106,3 +1222,51 @@ const paperBtnStyle: React.CSSProperties = {
   transition: 'all .15s ease',
   whiteSpace: 'nowrap',
 }
+
+// ---------- "大脑想明白了什么" 总结卡片样式 ----------
+const summaryCard: React.CSSProperties = {
+  background: 'rgba(15, 23, 42, 0.85)',
+  backdropFilter: 'blur(8px)',
+  border: '1px solid rgba(99, 102, 241, 0.3)',
+  borderRadius: 8,
+  padding: '10px 16px',
+  margin: '0 16px 4px',
+}
+
+const summaryCardTitle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 14,
+  fontWeight: 600,
+  color: '#e2e8f0',
+}
+
+const coreAnswerStyle: React.CSSProperties = {
+  fontSize: 13,
+  lineHeight: 1.5,
+  color: '#93c5fd',
+  fontWeight: 500,
+  padding: '8px 12px',
+  background: 'rgba(59, 130, 246, 0.1)',
+  borderRadius: 6,
+  borderLeft: '3px solid #3b82f6',
+  margin: '8px 0 0',
+}
+
+const sectionStyle: React.CSSProperties = { marginTop: 14 }
+const sectionTitle: React.CSSProperties = { margin: '0 0 6px', fontSize: 13, fontWeight: 500, color: '#94a3b8' }
+const insightList: React.CSSProperties = { listStyle: 'none', padding: 0, margin: 0 }
+const insightItem: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  padding: '6px 0',
+  fontSize: 13,
+  color: '#cbd5e1',
+  gap: 12,
+  borderBottom: '1px solid rgba(148, 163, 184, 0.1)',
+}
+const ceRef: React.CSSProperties = { fontSize: 11, color: '#64748b', marginLeft: 8, whiteSpace: 'nowrap', flexShrink: 0 }
+const refutedList: React.CSSProperties = { listStyle: 'none', padding: 0, margin: 0 }
+const refutedItem: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '4px 0', fontSize: 13, color: '#94a3b8' }
+const openQList: React.CSSProperties = { listStyle: 'disc', paddingLeft: 18, margin: 0, fontSize: 13, color: '#cbd5e1' }
+const methodNote: React.CSSProperties = { margin: 0, fontSize: 13, color: '#a5b4fc', fontStyle: 'italic' }
