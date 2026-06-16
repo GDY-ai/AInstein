@@ -1,7 +1,9 @@
 """AInstein Flask app."""
 import os
+import re
 import json
 import logging
+from typing import Any, Dict, List, Optional, Tuple
 from flask import Flask, request, jsonify, send_from_directory, g
 import database as db
 import auth
@@ -14,7 +16,7 @@ FRONTEND_DIST = os.path.join(os.path.dirname(__file__), 'frontend', 'dist')
 
 
 @app.before_request
-def ensure_db():
+def ensure_db() -> None:
     if not getattr(app, '_db_init', False):
         db.init_db()
         app._db_init = True
@@ -22,27 +24,41 @@ def ensure_db():
 
 # === Frontend ===
 
+def _no_cache(resp: Any) -> Any:
+    resp.headers['Cache-Control'] = 'no-cache, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
+
+
+def _immutable_cache(resp: Any) -> Any:
+    resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return resp
+
+
 @app.route('/ainstein/')
 @app.route('/ainstein')
-def serve_index():
-    return send_from_directory(FRONTEND_DIST, 'index.html')
+def serve_index() -> Any:
+    return _no_cache(send_from_directory(FRONTEND_DIST, 'index.html'))
 
 @app.route('/ainstein/assets/<path:filename>')
-def serve_assets(filename):
-    return send_from_directory(os.path.join(FRONTEND_DIST, 'assets'), filename)
+def serve_assets(filename: str) -> Any:
+    return _immutable_cache(send_from_directory(os.path.join(FRONTEND_DIST, 'assets'), filename))
 
 @app.route('/ainstein/<path:path>')
-def serve_spa(path):
+def serve_spa(path: str) -> Any:
     full = os.path.join(FRONTEND_DIST, path)
     if os.path.isfile(full):
-        return send_from_directory(FRONTEND_DIST, path)
-    return send_from_directory(FRONTEND_DIST, 'index.html')
+        # Hash 资源走 immutable，其他静态文件（含 index.html fallback）不缓存
+        if path.startswith('assets/'):
+            return _immutable_cache(send_from_directory(FRONTEND_DIST, path))
+        return _no_cache(send_from_directory(FRONTEND_DIST, path))
+    return _no_cache(send_from_directory(FRONTEND_DIST, 'index.html'))
 
 
 # === Health ===
 
 @app.route('/ainstein/api/health')
-def health():
+def health() -> Any:
     return jsonify({'status': 'ok'})
 
 
@@ -50,16 +66,36 @@ def health():
 # 用户认证 / 大脑生命周期（蓝图 §1.5）
 # ============================================================
 
-_USERNAME_MIN = 2
-_USERNAME_MAX = 32
-_PASSWORD_MIN = 6
+_USERNAME_MIN = 3
+_USERNAME_MAX = 20
+_PASSWORD_MIN = 8
+_USERNAME_PATTERN = re.compile(r'^[A-Za-z0-9_]+$')
 
 
-def _validate_credentials(username, password, email=None):
-    if not isinstance(username, str) or not (_USERNAME_MIN <= len(username.strip()) <= _USERNAME_MAX):
-        return f'username 长度需在 {_USERNAME_MIN}-{_USERNAME_MAX} 之间'
+def _validate_password(password: str) -> Tuple[bool, str]:
+    """校验密码强度，返回 (is_valid, error_message)。"""
     if not isinstance(password, str) or len(password) < _PASSWORD_MIN:
-        return f'password 长度至少 {_PASSWORD_MIN}'
+        return False, f'密码至少需要{_PASSWORD_MIN}位'
+    if not re.search(r'[A-Z]', password):
+        return False, '密码需要包含大写字母'
+    if not re.search(r'[a-z]', password):
+        return False, '密码需要包含小写字母'
+    if not re.search(r'[0-9]', password):
+        return False, '密码需要包含数字'
+    if not re.search(r'[!@#$%^&*()_+\-=\[\]{}|;:,.<>?/~`]', password):
+        return False, '密码需要包含特殊字符'
+    return True, ''
+
+
+def _validate_credentials(username: str, password: str, email: Optional[str] = None) -> Optional[str]:
+    if not isinstance(username, str) or not (_USERNAME_MIN <= len(username.strip()) <= _USERNAME_MAX):
+        return f'用户名长度需在 {_USERNAME_MIN}-{_USERNAME_MAX} 之间'
+    if not _USERNAME_PATTERN.match(username.strip()):
+        return '用户名仅允许字母、数字和下划线'
+    # 密码强度校验
+    valid, msg = _validate_password(password)
+    if not valid:
+        return msg
     if email is not None and email != '':
         if not isinstance(email, str) or '@' not in email or len(email) > 128:
             return 'email 格式不合法'
@@ -67,7 +103,7 @@ def _validate_credentials(username, password, email=None):
 
 
 @app.route('/ainstein/api/auth/register', methods=['POST'])
-def auth_register():
+def auth_register() -> Any:
     """注册新用户。请求体 ``{username, password, email?}``。"""
     data = request.get_json(silent=True) or {}
     username = (data.get('username') or '').strip()
@@ -101,7 +137,7 @@ def auth_register():
 
 
 @app.route('/ainstein/api/auth/login', methods=['POST'])
-def auth_login():
+def auth_login() -> Any:
     """登录。请求体 ``{username|email, password}`` → 返回 ``{token, user}``。"""
     data = request.get_json(silent=True) or {}
     identifier = (data.get('username') or data.get('email') or '').strip()
@@ -132,7 +168,7 @@ def auth_login():
 
 @app.route('/ainstein/api/auth/me', methods=['GET'])
 @auth.require_auth
-def auth_me():
+def auth_me() -> Any:
     """返回当前登录用户信息。"""
     return jsonify({'user': auth.public_user(g.current_user)})
 
@@ -142,7 +178,7 @@ def auth_me():
 _VALID_SEED_LEN = (4, 1000)
 
 
-def _brain_view(brain):
+def _brain_view(brain: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """格式化 brain 行为对外视图（注入 agent 数与 CE 数）。"""
     if not brain:
         return None
@@ -165,10 +201,25 @@ def _brain_view(brain):
             out['ce_count'] = row['c'] if row else 0
     except Exception:
         out['ce_count'] = 0
+    try:
+        with db.get_db() as conn:
+            row = conn.execute(
+                'SELECT COUNT(*) AS c FROM deliberations WHERE brain_id=?',
+                (brain['id'],)
+            ).fetchone()
+            out['deliberation_count'] = row['c'] if row else 0
+    except Exception:
+        out['deliberation_count'] = 0
+    # 注入 owner 用户名
+    try:
+        owner = db.get_user(brain['owner_user_id'])
+        out['owner_username'] = owner['username'] if owner else '未知'
+    except Exception:
+        out['owner_username'] = '未知'
     return out
 
 
-def _seed_initial_agents(brain_id):
+def _seed_initial_agents(brain_id: int) -> List[Dict[str, Any]]:
     """为新大脑 spawn 初始 agent（每个核心角色至少 1 个）。"""
     from agents.framework import AgentPool, RoleRegistry
 
@@ -190,7 +241,7 @@ def _seed_initial_agents(brain_id):
 
 @app.route('/ainstein/api/brains', methods=['POST'])
 @auth.require_auth
-def create_brain_api():
+def create_brain_api() -> Any:
     """用户提交种子问题，创建一个新硅基大脑。"""
     data = request.get_json(silent=True) or {}
     name = (data.get('name') or '').strip()
@@ -209,12 +260,20 @@ def create_brain_api():
 
     user = g.current_user
 
+    # 新建大脑自动关联为创世主脑的分支
+    try:
+        master_id = db.get_master_brain_id()
+    except Exception:
+        logger.exception('get_master_brain_id failed')
+        master_id = None
     try:
         brain_id = db.create_brain(
             name=name,
             seed_question=seed_question,
             owner_user_id=user['id'],
             config=config,
+            parent_brain_id=master_id,
+            brain_type='branch',
         )
     except Exception as e:
         logger.exception('create_brain failed')
@@ -274,6 +333,18 @@ def create_brain_api():
     except Exception:
         logger.exception('publish brain.created event failed')
 
+    # 通知 ATA 编排器启动该大脑的思考循环
+    # 注意：Gunicorn 多 worker 场景下，BRAIN_CREATED 事件只会发布在当前 worker 的本地 EventBus 上，
+    # 持有调度锁的 worker 不一定是接收到该 API 请求的 worker，因此必须在当前 worker 上显式启动。
+    # ATAOrchestrator.instance() 是单例：若当前 worker 尚未初始化，会新建实例并由 start_brain 启动 brain_loop 线程。
+    try:
+        from orchestrator import ATAOrchestrator
+        ata = ATAOrchestrator.instance()
+        started = ata.start_brain(brain_id)
+        logger.info('start_brain(%s) = %s', brain_id, started)
+    except Exception:
+        logger.exception('start_brain failed for brain=%s', brain_id)
+
     brain = db.get_brain(brain_id)
     return jsonify({
         'brain': _brain_view(brain),
@@ -284,11 +355,13 @@ def create_brain_api():
 
 @app.route('/ainstein/api/brains', methods=['GET'])
 @auth.require_auth
-def list_brains_api():
-    """列出当前用户的大脑（管理员可通过 ``all=1`` 查看全部）。"""
+def list_brains_api() -> Any:
+    """列出大脑列表；管理员默认即看到全部。"""
     user = g.current_user
     show_all = request.args.get('all') in ('1', 'true', 'yes')
-    if show_all and (user.get('role') or '').lower() == 'admin':
+    is_admin = (user.get('role') or '').lower() == 'admin'
+    # 管理员默认展示所有大脑
+    if is_admin or show_all:
         rows = db.get_brains()
     else:
         rows = db.get_brains(owner_user_id=user['id'])
@@ -297,7 +370,7 @@ def list_brains_api():
 
 @app.route('/ainstein/api/brains/<int:brain_id>', methods=['GET'])
 @auth.require_auth
-def get_brain_api(brain_id: int):
+def get_brain_api(brain_id: int) -> Any:
     """获取指定大脑详情；非 owner 且非 admin 不可见。"""
     user = g.current_user
     brain = db.get_brain(brain_id)
@@ -311,7 +384,7 @@ def get_brain_api(brain_id: int):
 
 @app.route('/ainstein/api/brains/<int:brain_id>/pause', methods=['POST'])
 @auth.require_admin
-def pause_brain_api(brain_id: int):
+def pause_brain_api(brain_id: int) -> Any:
     """暂停大脑思考（仅管理员）。同步暂停 ATA 编排器循环。"""
     brain = db.get_brain(brain_id)
     if not brain:
@@ -341,9 +414,59 @@ def pause_brain_api(brain_id: int):
     return jsonify({'status': 'paused', 'brain': _brain_view(db.get_brain(brain_id))})
 
 
+@app.route('/ainstein/api/brains/<int:brain_id>/stop', methods=['POST'])
+@auth.require_admin
+def stop_brain_api(brain_id: int) -> Any:
+    """永久停止大脑思考（不可逆）。触发结论上报和思考总结。"""
+    brain = db.get_brain(brain_id)
+    if not brain:
+        return jsonify({'error': 'brain not found'}), 404
+    if brain.get('state') == 'completed':
+        return jsonify({'status': 'already completed', 'brain': _brain_view(brain)})
+    if brain.get('brain_type') == 'master':
+        return jsonify({'error': '主脑不可手动停止'}), 403
+
+    try:
+        db.update_brain_state(brain_id, 'completed')
+    except Exception as e:
+        logger.exception('stop brain failed')
+        return jsonify({'error': f'stop failed: {e}'}), 500
+
+    # 停止编排器循环 + 触发结论上报 + 思考总结
+    try:
+        from orchestrator import ATAOrchestrator
+        orch = ATAOrchestrator.instance()
+        try:
+            orch.pause_brain(brain_id)
+        except Exception:
+            logger.exception('orchestrator pause_brain failed brain=%s', brain_id)
+        try:
+            orch._report_to_master_brain(brain_id)
+        except Exception:
+            logger.exception('orchestrator _report_to_master_brain failed brain=%s', brain_id)
+        try:
+            orch._trigger_post_thinking_tasks(brain_id, reason='manual_stop')
+        except Exception:
+            logger.exception('orchestrator _trigger_post_thinking_tasks failed brain=%s', brain_id)
+    except Exception:
+        logger.exception('orchestrator stop pipeline failed brain=%s', brain_id)
+
+    try:
+        from event_bus import EventBus, EventTypes
+        EventBus.instance().publish(
+            event_type=EventTypes.BRAIN_PAUSED,
+            brain_id=brain_id,
+            payload={'reason': 'manual_stop', 'stopped_by_user_id': g.current_user['id']},
+        )
+    except Exception:
+        logger.exception('publish brain.stopped failed')
+
+    return jsonify({'status': 'completed', 'brain': _brain_view(db.get_brain(brain_id))})
+
+
 @app.route('/ainstein/api/brains/<int:brain_id>/resume', methods=['POST'])
 @auth.require_admin
-def resume_brain_api(brain_id: int):
+def resume_brain_api(brain_id: int) -> Any:
     """恢复大脑思考（仅管理员）。同步唤醒 ATA 编排器循环。"""
     brain = db.get_brain(brain_id)
     if not brain:
@@ -376,17 +499,17 @@ def resume_brain_api(brain_id: int):
 # === Projects ===
 
 @app.route('/ainstein/api/projects', methods=['GET'])
-def list_projects():
+def list_projects() -> Any:
     return jsonify(db.get_projects())
 
 @app.route('/ainstein/api/projects', methods=['POST'])
-def create_project():
+def create_project() -> Any:
     data = request.get_json()
     pid = db.create_project(data['name'], data['mission'], data['domain'], data.get('config'))
     return jsonify({'id': pid}), 201
 
 @app.route('/ainstein/api/projects/<int:pid>')
-def get_project(pid):
+def get_project(pid: int) -> Any:
     p = db.get_project(pid)
     if not p:
         return jsonify({'error': 'not found'}), 404
@@ -397,11 +520,11 @@ def get_project(pid):
 # === Queue ===
 
 @app.route('/ainstein/api/projects/<int:pid>/queue', methods=['GET'])
-def list_queue(pid):
+def list_queue(pid: int) -> Any:
     return jsonify(db.get_queue(pid))
 
 @app.route('/ainstein/api/projects/<int:pid>/queue', methods=['POST'])
-def add_queue(pid):
+def add_queue(pid: int) -> Any:
     data = request.get_json()
     qid = db.add_to_queue(pid, data['topic'], data.get('priority', 5), data.get('source', 'user'))
     return jsonify({'id': qid}), 201
@@ -410,21 +533,21 @@ def add_queue(pid):
 # === Sessions ===
 
 @app.route('/ainstein/api/projects/<int:pid>/sessions')
-def list_sessions(pid):
+def list_sessions(pid: int) -> Any:
     return jsonify(db.get_sessions(pid))
 
 @app.route('/ainstein/api/projects/<int:pid>/sessions/<int:sid>')
-def get_session(pid, sid):
+def get_session(pid: int, sid: int) -> Any:
     s = db.get_session(sid)
     if not s or s['project_id'] != pid:
         return jsonify({'error': 'not found'}), 404
     return jsonify(s)
 
 @app.route('/ainstein/api/projects/<int:pid>/sessions/run', methods=['POST'])
-def run_session(pid):
+def run_session(pid: int) -> Any:
     import threading
     data = request.get_json() or {}
-    def _run():
+    def _run() -> None:
         from agents.researcher import run_research_session
         run_research_session(pid, topic=data.get('topic'))
     t = threading.Thread(target=_run, daemon=True)
@@ -435,7 +558,7 @@ def run_session(pid):
 # === Findings ===
 
 @app.route('/ainstein/api/projects/<int:pid>/findings')
-def list_findings(pid):
+def list_findings(pid: int) -> Any:
     status = request.args.get('status')
     category = request.args.get('category')
     limit = int(request.args.get('limit', 50))
@@ -445,11 +568,11 @@ def list_findings(pid):
 # === Datasets ===
 
 @app.route('/ainstein/api/projects/<int:pid>/datasets', methods=['GET'])
-def list_datasets(pid):
+def list_datasets(pid: int) -> Any:
     return jsonify(db.get_datasets(pid))
 
 @app.route('/ainstein/api/projects/<int:pid>/datasets/upload', methods=['POST'])
-def upload_dataset(pid):
+def upload_dataset(pid: int) -> Any:
     from config import DATA_DIR
     import pandas as pd
 
@@ -483,22 +606,22 @@ def upload_dataset(pid):
 # === Scientist / Director ===
 
 @app.route('/ainstein/api/projects/<int:pid>/directives')
-def list_directives(pid):
+def list_directives(pid: int) -> Any:
     return jsonify(db.get_directives(pid))
 
 @app.route('/ainstein/api/projects/<int:pid>/scientist/run', methods=['POST'])
-def run_scientist(pid):
+def run_scientist(pid: int) -> Any:
     from agents.scientist import run_scientist
     result = run_scientist(pid)
     return jsonify(result or {'status': 'no result'})
 
 @app.route('/ainstein/api/projects/<int:pid>/memory')
-def list_memory(pid):
+def list_memory(pid: int) -> Any:
     kind = request.args.get('kind')
     return jsonify(db.get_director_memories(pid, kind=kind))
 
 @app.route('/ainstein/api/projects/<int:pid>/director/run', methods=['POST'])
-def run_director(pid):
+def run_director(pid: int) -> Any:
     from agents.director import run_director_daily
     result = run_director_daily(pid)
     return jsonify(result or {'status': 'no result'})
@@ -509,7 +632,7 @@ def run_director(pid):
 # 蓝图 §1.1 §2.4，业务逻辑见 cognitive.py
 # ============================================================
 
-def _ensure_brain(brain_id: int):
+def _ensure_brain(brain_id: int) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[Any, int]]]:
     """校验大脑存在，否则返回 (None, 404 response)。"""
     brain = db.get_brain(brain_id)
     if not brain:
@@ -518,7 +641,7 @@ def _ensure_brain(brain_id: int):
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/cognitive-elements', methods=['GET'])
-def list_cognitive_elements(brain_id: int):
+def list_cognitive_elements(brain_id: int) -> Any:
     """列出指定大脑下的认知元素，支持类型 / 最低置信度 / 分页过滤。"""
     import cognitive
     _, err = _ensure_brain(brain_id)
@@ -542,7 +665,7 @@ def list_cognitive_elements(brain_id: int):
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/cognitive-elements', methods=['POST'])
-def create_cognitive_element(brain_id: int):
+def create_cognitive_element(brain_id: int) -> Any:
     """创建认知元素。请求体字段：type / title / content / confidence /
     source_agent_id / metadata。"""
     import cognitive
@@ -567,7 +690,7 @@ def create_cognitive_element(brain_id: int):
 
 @app.route('/ainstein/api/brains/<int:brain_id>/cognitive-elements/<int:ce_id>',
            methods=['GET'])
-def get_cognitive_element(brain_id: int, ce_id: int):
+def get_cognitive_element(brain_id: int, ce_id: int) -> Any:
     """获取单个认知元素详情。"""
     import cognitive
     element = cognitive.get_element(ce_id)
@@ -578,7 +701,7 @@ def get_cognitive_element(brain_id: int, ce_id: int):
 
 @app.route('/ainstein/api/brains/<int:brain_id>/cognitive-elements/<int:ce_id>',
            methods=['PUT'])
-def update_cognitive_element_api(brain_id: int, ce_id: int):
+def update_cognitive_element_api(brain_id: int, ce_id: int) -> Any:
     """更新认知元素。支持的字段见 cognitive.update_element。
     若请求体含 ``confidence_reason``，将走 ``update_confidence`` 路径以记录变更历史。"""
     import cognitive
@@ -604,7 +727,7 @@ def update_cognitive_element_api(brain_id: int, ce_id: int):
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/cognitive-relations', methods=['GET'])
-def list_cognitive_relations(brain_id: int):
+def list_cognitive_relations(brain_id: int) -> Any:
     """列出认知关系。可选 query: src_id / dst_id / relation / element_id (取该节点全部边)。"""
     import cognitive
     _, err = _ensure_brain(brain_id)
@@ -627,7 +750,7 @@ def list_cognitive_relations(brain_id: int):
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/cognitive-relations', methods=['POST'])
-def create_cognitive_relation_api(brain_id: int):
+def create_cognitive_relation_api(brain_id: int) -> Any:
     """创建认知关系。请求体：source_id / target_id / relation_type / weight / created_by_agent_id。"""
     import cognitive
     _, err = _ensure_brain(brain_id)
@@ -652,7 +775,7 @@ def create_cognitive_relation_api(brain_id: int):
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/knowledge-graph', methods=['GET'])
-def get_knowledge_graph_api(brain_id: int):
+def get_knowledge_graph_api(brain_id: int) -> Any:
     """返回前端力导向图所需的 nodes + edges 结构。
 
     Query 参数：
@@ -674,7 +797,7 @@ def get_knowledge_graph_api(brain_id: int):
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/frontier', methods=['GET'])
-def get_frontier_api(brain_id: int):
+def get_frontier_api(brain_id: int) -> Any:
     """获取大脑认知边界（最近 / 低置信度 / 未被支撑 三类元素的并集）。"""
     import cognitive
     _, err = _ensure_brain(brain_id)
@@ -693,7 +816,7 @@ def get_frontier_api(brain_id: int):
 # ============================================================
 
 @app.route('/ainstein/api/brains/<int:brain_id>/deliberations', methods=['POST'])
-def initiate_deliberation_api(brain_id: int):
+def initiate_deliberation_api(brain_id: int) -> Any:
     """发起一次博弈。
 
     请求体字段：
@@ -742,7 +865,7 @@ def initiate_deliberation_api(brain_id: int):
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
 
-        def _run_async():
+        def _run_async() -> None:
             try:
                 # 重新走完整流程；initiate 已写库，complete deliberate 会再 initiate 一次
                 # 故此处直接驱动剩余轮次：调用 run_turn / collect_votes / judge / conclude
@@ -798,7 +921,7 @@ def initiate_deliberation_api(brain_id: int):
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/deliberations', methods=['GET'])
-def list_deliberations_api(brain_id: int):
+def list_deliberations_api(brain_id: int) -> Any:
     """列出博弈记录。Query: ``status`` / ``limit``。"""
     import deliberation
     _, err = _ensure_brain(brain_id)
@@ -812,7 +935,7 @@ def list_deliberations_api(brain_id: int):
 
 @app.route('/ainstein/api/brains/<int:brain_id>/deliberations/<int:delib_id>',
            methods=['GET'])
-def get_deliberation_api(brain_id: int, delib_id: int):
+def get_deliberation_api(brain_id: int, delib_id: int) -> Any:
     """获取博弈详情（含所有轮次和投票）。"""
     import deliberation
     _, err = _ensure_brain(brain_id)
@@ -826,7 +949,7 @@ def get_deliberation_api(brain_id: int, delib_id: int):
 
 @app.route('/ainstein/api/brains/<int:brain_id>/deliberations/<int:delib_id>/run',
            methods=['POST'])
-def run_deliberation_api(brain_id: int, delib_id: int):
+def run_deliberation_api(brain_id: int, delib_id: int) -> Any:
     """手动触发下一轮发言或直接走到完成。
 
     请求体字段（可选）：
@@ -924,7 +1047,7 @@ def run_deliberation_api(brain_id: int, delib_id: int):
 # ============================================================
 
 @app.route('/ainstein/api/brains/<int:brain_id>/observer-logs', methods=['GET'])
-def list_observer_logs_api(brain_id: int):
+def list_observer_logs_api(brain_id: int) -> Any:
     """获取观察员日志列表（默认按时间倒序）。
 
     Query 参数：
@@ -943,7 +1066,7 @@ def list_observer_logs_api(brain_id: int):
 
 @app.route('/ainstein/api/brains/<int:brain_id>/observer-logs/latest',
            methods=['GET'])
-def get_latest_observer_log_api(brain_id: int):
+def get_latest_observer_log_api(brain_id: int) -> Any:
     """获取最新一条观察员总结。"""
     import observer
     _, err = _ensure_brain(brain_id)
@@ -957,7 +1080,7 @@ def get_latest_observer_log_api(brain_id: int):
 
 @app.route('/ainstein/api/brains/<int:brain_id>/observer-logs/generate',
            methods=['POST'])
-def generate_observer_log_api(brain_id: int):
+def generate_observer_log_api(brain_id: int) -> Any:
     """手动触发生成一次总结。
 
     请求体（可选）：
@@ -982,7 +1105,7 @@ def generate_observer_log_api(brain_id: int):
 
 @app.route('/ainstein/api/brains/<int:brain_id>/observer-logs/<int:log_id>',
            methods=['GET'])
-def get_observer_log_api(brain_id: int, log_id: int):
+def get_observer_log_api(brain_id: int, log_id: int) -> Any:
     """获取单条观察员日志详情。"""
     import observer
     log = observer.get_observer_log(log_id)
@@ -992,12 +1115,68 @@ def get_observer_log_api(brain_id: int, log_id: int):
 
 
 # ============================================================
+# 硅基大脑 —— 思考总结（Thinking Summary）
+# 围绕 seed_question 凝练 conclusion / consensus / 高置信 insight。
+# ============================================================
+
+def _ensure_brain_with_auth(brain_id: int) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[Any, int]]]:
+    """校验大脑存在 + 权限（owner 或 admin），失败时返回 (None, response)。"""
+    user = g.current_user
+    brain = db.get_brain(brain_id)
+    if not brain:
+        return None, (jsonify({'error': 'brain not found'}), 404)
+    is_admin = (user.get('role') or '').lower() == 'admin'
+    if brain.get('owner_user_id') != user['id'] and not is_admin:
+        return None, (jsonify({'error': 'forbidden'}), 403)
+    return brain, None
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/thinking-summary', methods=['GET'])
+@auth.require_auth
+def get_thinking_summary_api(brain_id: int) -> Any:
+    """读取该大脑最新的思考总结缓存；不存在则返回 ``{summary: null}``。"""
+    import brain_summary
+    _, err = _ensure_brain_with_auth(brain_id)
+    if err:
+        return err
+    cached = brain_summary.get_thinking_summary(brain_id)
+    if not cached:
+        return jsonify({'summary': None}), 200
+    return jsonify(cached)
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/thinking-summary/generate',
+           methods=['POST'])
+@auth.require_auth
+def generate_thinking_summary_api(brain_id: int) -> Any:
+    """手动触发生成一次思考总结。
+
+    请求体（可选）：
+      - ``force``: bool，强制忽略缓存重新生成，默认 ``true``。
+    """
+    import brain_summary
+    _, err = _ensure_brain_with_auth(brain_id)
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    force = bool(data.get('force', True))
+    try:
+        result = brain_summary.generate_thinking_summary(brain_id, force=force)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        logger.exception('generate_thinking_summary failed: %s', e)
+        return jsonify({'error': 'generate failed', 'detail': str(e)}), 500
+    return jsonify(result), 201
+
+
+# ============================================================
 # 硅基大脑 —— ATA 编排器（事件驱动的大脑思考调度）
 # 蓝图 §1.3 / §2.5，业务逻辑见 orchestrator.py
 # ============================================================
 
 @app.route('/ainstein/api/brains/<int:brain_id>/start', methods=['POST'])
-def api_start_brain(brain_id: int):
+def api_start_brain(brain_id: int) -> Any:
     """启动指定大脑的思考循环（ATA 编排器接管）。"""
     from orchestrator import ATAOrchestrator
     _, err = _ensure_brain(brain_id)
@@ -1013,7 +1192,7 @@ def api_start_brain(brain_id: int):
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/status', methods=['GET'])
-def api_brain_status(brain_id: int):
+def api_brain_status(brain_id: int) -> Any:
     """获取指定大脑在编排器中的运行状态。"""
     from orchestrator import ATAOrchestrator
     _, err = _ensure_brain(brain_id)
@@ -1030,7 +1209,7 @@ def api_brain_status(brain_id: int):
 
 
 @app.route('/ainstein/api/orchestrator/active', methods=['GET'])
-def api_active_brains():
+def api_active_brains() -> Any:
     """列出当前编排器中所有活跃 / 暂停的大脑。"""
     from orchestrator import ATAOrchestrator
     items = ATAOrchestrator.instance().list_active_brains()
@@ -1045,11 +1224,11 @@ import threading
 import uuid as _uuid
 
 # 存储论文任务状态（内存中，重启丢失）
-_paper_tasks = {}
+_paper_tasks: Dict[str, Dict[str, Any]] = {}
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/generate-paper', methods=['POST'])
-def generate_paper_api(brain_id: int):
+def generate_paper_api(brain_id: int) -> Any:
     """发起论文生成任务（异步后台执行）。"""
     _, err = _ensure_brain(brain_id)
     if err:
@@ -1064,7 +1243,7 @@ def generate_paper_api(brain_id: int):
         'md_filename': None,
     }
 
-    def _run_paper_gen(bid, tid):
+    def _run_paper_gen(bid: int, tid: str) -> None:
         try:
             from paper_generator import generate_paper, get_task_status
             generate_paper(bid, tid)
@@ -1083,7 +1262,7 @@ def generate_paper_api(brain_id: int):
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/paper-status/<task_id>')
-def paper_status(brain_id: int, task_id: str):
+def paper_status(brain_id: int, task_id: str) -> Any:
     """查询论文生成任务状态。"""
     from paper_generator import get_task_status
     task = get_task_status(task_id)
@@ -1112,7 +1291,7 @@ def paper_status(brain_id: int, task_id: str):
 
 
 @app.route('/ainstein/api/brains/<int:brain_id>/paper/<filename>')
-def download_paper(brain_id: int, filename: str):
+def download_paper(brain_id: int, filename: str) -> Any:
     """下载生成的论文文件（PDF 或 Markdown）。"""
     from paper_generator import PAPERS_DIR
     import re

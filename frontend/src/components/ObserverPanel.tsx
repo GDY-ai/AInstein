@@ -13,11 +13,13 @@ interface Props {
   defaultOpen?: boolean
   /** 轮询间隔，单位 ms */
   pollIntervalMs?: number
+  /** 当前大脑状态：'thinking' | 'paused' | 'completed' | ... */
+  brainState?: string
 }
 
 const POLL_DEFAULT = 30_000
 
-export default function ObserverPanel({ brainId, defaultOpen = true, pollIntervalMs = POLL_DEFAULT }: Props) {
+export default function ObserverPanel({ brainId, defaultOpen = true, pollIntervalMs = POLL_DEFAULT, brainState }: Props) {
   const [open, setOpen] = useState(defaultOpen)
   const [latest, setLatest] = useState<ObserverLog | null>(null)
   const [history, setHistory] = useState<ObserverLog[]>([])
@@ -52,6 +54,23 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
       clearInterval(t)
     }
   }, [brainId, pollIntervalMs])
+
+  // ---------- 大脑暂停/完成时 → 自动展开 + 立即刷新 ----------
+  useEffect(() => {
+    if (brainState === 'paused' || brainState === 'completed') {
+      setOpen(true)
+      ;(async () => {
+        try {
+          const data = await api.getLatestObserverLog(brainId)
+          setLatest(data || null)
+          setLastSync(new Date())
+          setError('')
+        } catch (e: any) {
+          setError(e?.message || '刷新失败')
+        }
+      })()
+    }
+  }, [brainState, brainId])
 
   // ---------- 历史展开时拉取列表 ----------
   useEffect(() => {
@@ -129,6 +148,9 @@ export default function ObserverPanel({ brainId, defaultOpen = true, pollInterva
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <span style={titleEmoji} aria-hidden>🔭</span>
           <span style={titleText}>观察员视角</span>
+          {(brainState === 'paused' || brainState === 'completed') && latest && (
+            <span style={reviewBadge}>复盘报告</span>
+          )}
           {body && (
             <span style={importanceMeter(body.importance)}>
               {(body.importance * 100).toFixed(0)}
@@ -440,6 +462,17 @@ const importanceBadge: React.CSSProperties = {
   border: '1px solid rgba(255,196,0,0.35)',
   whiteSpace: 'nowrap',
   fontWeight: 600,
+}
+
+const reviewBadge: React.CSSProperties = {
+  fontSize: 10,
+  padding: '2px 6px',
+  borderRadius: 4,
+  background: 'rgba(168, 85, 247, 0.2)',
+  color: '#c084fc',
+  border: '1px solid rgba(168, 85, 247, 0.3)',
+  fontWeight: 500,
+  marginLeft: 6,
 }
 
 const syncStamp: React.CSSProperties = {

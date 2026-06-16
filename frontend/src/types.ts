@@ -103,7 +103,7 @@ export interface Brain {
   name: string;
   seed_question: string;
   owner_user_id: number;
-  state: 'gestating' | 'active' | 'paused' | 'archived' | string;
+  state: 'gestating' | 'active' | 'paused' | 'completed' | 'archived' | 'dormant' | string;
   config_json: string;
   config?: Record<string, unknown>;
   frontier_score: number;
@@ -112,6 +112,12 @@ export interface Brain {
   last_active_at: string | null;
   agent_count?: number;
   ce_count?: number;
+  deliberation_count?: number;
+  // 主脑架构新增
+  brain_type?: 'master' | 'branch' | 'standalone';
+  think_count?: number;
+  parent_brain_id?: number | null;
+  owner_username?: string;
 }
 
 export interface AuthResponse {
@@ -188,4 +194,26 @@ export interface ObserverLog {
   cited_ce_ids: number[];
   pushed: number;
   created_at: string;
+}
+
+// ===== 硅基大脑 · 思考总结 =====
+
+export interface ThinkingSummaryInsight {
+  summary: string
+  ce_id: number
+  confidence: number
+}
+
+export interface ThinkingSummaryRefuted {
+  claim: string
+  ce_id: number
+}
+
+export interface ThinkingSummary {
+  core_answer: string
+  key_insights: ThinkingSummaryInsight[]
+  refuted: ThinkingSummaryRefuted[]
+  open_questions: string[]
+  methodology_note: string
+  generated_at?: string
 }

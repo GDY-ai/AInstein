@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 # 12 种认知元素类型 —— 严格遵循蓝图 §1.1.2 表格
+# 额外：“tool_gap”作为元认知信号 —— 当 agent 发现现有工具不足以回答问题时产出
 CE_TYPES: List[str] = [
     "observation",       # 观察 / 数据（L0 原始层）
     "question",          # 问题（L1 推测层）
@@ -34,6 +35,7 @@ CE_TYPES: List[str] = [
     "insight",           # 洞察（L4 认知层）
     "consensus",         # 共识（L5 集体层）
     "dissent",           # 分歧（L5 集体层）
+    "tool_gap",          # 工具缺口（元认知层） —— agent 表达“现有工具无法回答某问题”
 ]
 
 # 10 种认知关系类型
@@ -488,7 +490,7 @@ def get_frontier(
 
     # 2) 低置信度 + 开放状态（先取大集合再过滤）
     pool = db.get_cognitive_elements(brain_id, limit=max(limit * 4, 200))
-    open_states = {"open", "proposed", "testing", "at_risk", "being_explored"}
+    open_states = {"open", "proposed", "testing", "at_risk", "being_explored", "contested"}
     low_conf = [
         r for r in pool
         if (r.get("confidence") or 0.0) < confidence_ceiling
@@ -522,3 +524,60 @@ def get_frontier(
             "unverified": [_hydrate_element(r) for r in unverified],
         },
     }
+
+
+# ============================================================
+# CE 再激活（refuted/contested → open）
+# ============================================================
+
+def reactivate_element(element_id: int, reason: str = "") -> Optional[Dict[str, Any]]:
+    """将已 refuted/contested 的 CE 重新激活为 open 状态。
+
+    条件：仅当 CE 当前 status 为 refuted 或 contested 时才允许 reopen。
+    重置 confidence 为 0.5（重新开始验证）。
+
+    :param element_id: CE id
+    :param reason: 重新激活的原因（记录在 payload 中）
+    :return: 更新后的 CE，若不满足条件返回 None
+    """
+    ce = get_element(element_id)
+    if not ce:
+        return None
+
+    current_status = ce.get("status") or "open"
+    if current_status not in ("refuted", "contested"):
+        return None
+
+    updates: Dict[str, Any] = {
+        "status": "open",
+        "confidence": 0.5,
+    }
+
+    # 在 payload 中记录 reactivation 历史
+    payload = ce.get("payload") or {}
+    if isinstance(payload, str):
+        import json as _json
+        try:
+            payload = _json.loads(payload)
+        except Exception:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    reactivations = payload.get("reactivations") or []
+    if not isinstance(reactivations, list):
+        reactivations = []
+    reactivations.append({
+        "from_status": current_status,
+        "reason": reason,
+        "at": db._now_iso() if hasattr(db, "_now_iso") else __import__("datetime").datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    payload["reactivations"] = reactivations
+    updates["payload"] = payload
+
+    result = update_element(element_id, updates)
+    logger.info(
+        "[CE-lifecycle] CE#%d 重新激活: %s → open (reason: %s)",
+        element_id, current_status, (reason or "")[:80],
+    )
+    return result

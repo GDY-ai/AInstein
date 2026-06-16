@@ -3,6 +3,7 @@ import sqlite3
 import json
 import logging
 from contextlib import contextmanager
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 from config import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -126,9 +127,15 @@ CREATE TABLE IF NOT EXISTS brains (
     created_at TEXT DEFAULT (datetime('now')),
     started_at TEXT,
     last_active_at TEXT,
-    legacy_project_id INTEGER REFERENCES projects(id)
+    legacy_project_id INTEGER REFERENCES projects(id),
+    parent_brain_id INTEGER REFERENCES brains(id),
+    brain_type TEXT NOT NULL DEFAULT 'standalone',
+    think_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_brains_owner ON brains(owner_user_id, state);
+-- 注意：idx_brains_parent / idx_brains_type 不在此处创建，
+--      因旧库 brains 表无 parent_brain_id / brain_type 列，executescript 会报错。
+--      统一由 _migrate_add_master_brain_columns() 在 ALTER 之后创建。
 
 -- ========= 认知元素 =========
 
@@ -285,17 +292,70 @@ CREATE INDEX IF NOT EXISTS idx_bs_brain ON brain_snapshots(brain_id, created_at)
 """
 
 
-def init_db():
+# Brain states: 'gestating', 'active', 'paused', 'completed', 'archived', 'dormant'
+# Brain types: 'master', 'branch', 'standalone'
+
+
+def _migrate_add_master_brain_columns(conn: sqlite3.Connection) -> None:
+    """为主脑架构添加新列（幂等迁移）。"""
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(brains)").fetchall()]
+
+    if 'parent_brain_id' not in columns:
+        conn.execute("ALTER TABLE brains ADD COLUMN parent_brain_id INTEGER REFERENCES brains(id)")
+    if 'brain_type' not in columns:
+        conn.execute("ALTER TABLE brains ADD COLUMN brain_type TEXT NOT NULL DEFAULT 'standalone'")
+    if 'think_count' not in columns:
+        conn.execute("ALTER TABLE brains ADD COLUMN think_count INTEGER NOT NULL DEFAULT 0")
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_brains_parent ON brains(parent_brain_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_brains_type ON brains(brain_type)")
+
+
+def _ensure_master_brain(conn: sqlite3.Connection) -> None:
+    """确保创世主脑存在（按 brain_type='master' 查询，避免依赖固定 id）。
+
+    说明：owner_user_id 取首个管理员或首个用户；若尚无任何用户（全新数据库），
+    则跳过本次初始化，等待用户创建后下次 init_db() 再补建，避免外键约束失败。
+    """
+    row = conn.execute("SELECT id FROM brains WHERE brain_type='master'").fetchone()
+    if row is not None:
+        return
+    owner_row = conn.execute(
+        "SELECT id FROM users WHERE role='admin' ORDER BY id ASC LIMIT 1"
+    ).fetchone() or conn.execute(
+        "SELECT id FROM users ORDER BY id ASC LIMIT 1"
+    ).fetchone()
+    if owner_row is None:
+        return
+    conn.execute(
+        """
+        INSERT INTO brains (name, seed_question, owner_user_id, state, brain_type, config_json)
+        VALUES ('创世主脑', '汇聚所有思考的精华，构建跨领域知识体系', ?, 'dormant', 'master', '{}')
+        """,
+        (owner_row['id'],)
+    )
+
+
+def init_db() -> None:
     import os
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with get_db() as conn:
         conn.executescript(_SCHEMA)
         conn.executescript(_SCHEMA_SILICON_BRAIN)
+        _migrate_add_master_brain_columns(conn)
+        _ensure_master_brain(conn)
     logger.info(f"Database initialized at {DB_PATH} (legacy + silicon_brain schemas applied)")
 
 
+def get_master_brain_id() -> Optional[int]:
+    """获取创世主脑的 brain_id。"""
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM brains WHERE brain_type='master'").fetchone()
+        return row['id'] if row else None
+
+
 @contextmanager
-def get_db():
+def get_db() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -312,27 +372,27 @@ def get_db():
 
 # === Projects ===
 
-def create_project(name, mission, domain, config=None):
+def create_project(name: str, mission: str, domain: str, config: Optional[Dict[str, Any]] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO projects (name, mission, domain, config_json) VALUES (?, ?, ?, ?)",
             (name, mission, domain, json.dumps(config or {}, ensure_ascii=False))
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_projects(status='active'):
+def get_projects(status: str = 'active') -> List[Dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM projects WHERE status=? ORDER BY created_at DESC", (status,)
         ).fetchall()
         return [dict(r) for r in rows]
 
-def get_project(project_id):
+def get_project(project_id: int) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
         return dict(row) if row else None
 
-def get_project_stats(project_id):
+def get_project_stats(project_id: int) -> Dict[str, Any]:
     with get_db() as conn:
         sessions = conn.execute(
             "SELECT COUNT(*) as total, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed FROM research_sessions WHERE project_id=?",
@@ -358,15 +418,15 @@ def get_project_stats(project_id):
 
 # === Scientist Directives ===
 
-def add_directive(project_id, directive, priority=5):
+def add_directive(project_id: int, directive: str, priority: int = 5) -> int:
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO scientist_directives (project_id, directive, priority) VALUES (?, ?, ?)",
             (project_id, directive, priority)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_directives(project_id, status='active'):
+def get_directives(project_id: int, status: str = 'active') -> List[Dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM scientist_directives WHERE project_id=? AND status=? ORDER BY priority DESC",
@@ -377,15 +437,15 @@ def get_directives(project_id, status='active'):
 
 # === Research Queue ===
 
-def add_to_queue(project_id, topic, priority=5, source='user', source_session_id=None):
+def add_to_queue(project_id: int, topic: str, priority: int = 5, source: str = 'user', source_session_id: Optional[int] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO research_queue (project_id, topic, priority, source, source_session_id) VALUES (?, ?, ?, ?, ?)",
             (project_id, topic, priority, source, source_session_id)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_queue(project_id, status=None):
+def get_queue(project_id: int, status: Optional[str] = None) -> List[Dict[str, Any]]:
     with get_db() as conn:
         if status:
             rows = conn.execute(
@@ -399,7 +459,7 @@ def get_queue(project_id, status=None):
             ).fetchall()
         return [dict(r) for r in rows]
 
-def pick_next_topic(project_id):
+def pick_next_topic(project_id: int) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM research_queue WHERE project_id=? AND status='pending' ORDER BY priority ASC, created_at ASC LIMIT 1",
@@ -410,22 +470,22 @@ def pick_next_topic(project_id):
             return dict(row)
         return None
 
-def update_queue_item(queue_id, status):
+def update_queue_item(queue_id: int, status: str) -> None:
     with get_db() as conn:
         conn.execute("UPDATE research_queue SET status=? WHERE id=?", (status, queue_id))
 
 
 # === Sessions ===
 
-def create_session(project_id, topic, engine_type='three_round', queue_id=None):
+def create_session(project_id: int, topic: str, engine_type: str = 'three_round', queue_id: Optional[int] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO research_sessions (project_id, topic, engine_type, queue_id) VALUES (?, ?, ?, ?)",
             (project_id, topic, engine_type, queue_id)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def update_session(session_id, **kwargs):
+def update_session(session_id: int, **kwargs: Any) -> None:
     allowed = {'status', 'hypotheses', 'verification', 'findings', 'next_directions', 'data_summary', 'duration_seconds'}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
@@ -435,7 +495,7 @@ def update_session(session_id, **kwargs):
     with get_db() as conn:
         conn.execute(f"UPDATE research_sessions SET {set_clause} WHERE id=?", values)
 
-def get_sessions(project_id, limit=20):
+def get_sessions(project_id: int, limit: int = 20) -> List[Dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM research_sessions WHERE project_id=? ORDER BY created_at DESC LIMIT ?",
@@ -443,7 +503,7 @@ def get_sessions(project_id, limit=20):
         ).fetchall()
         return [dict(r) for r in rows]
 
-def get_session(session_id):
+def get_session(session_id: int) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM research_sessions WHERE id=?", (session_id,)).fetchone()
         return dict(row) if row else None
@@ -451,8 +511,8 @@ def get_session(session_id):
 
 # === Findings ===
 
-def add_finding(project_id, session_id, finding, category='general', confidence='low',
-                evidence='', actionable=0, action_suggestion=''):
+def add_finding(project_id: int, session_id: int, finding: str, category: str = 'general', confidence: str = 'low',
+                evidence: str = '', actionable: int = 0, action_suggestion: str = '') -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO research_findings
@@ -460,9 +520,9 @@ def add_finding(project_id, session_id, finding, category='general', confidence=
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (project_id, session_id, finding, category, confidence, evidence, actionable, action_suggestion)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_findings(project_id, limit=50, status=None, category=None):
+def get_findings(project_id: int, limit: int = 50, status: Optional[str] = None, category: Optional[str] = None) -> List[Dict[str, Any]]:
     with get_db() as conn:
         q = "SELECT f.*, s.topic as session_topic FROM research_findings f JOIN research_sessions s ON f.session_id = s.id WHERE f.project_id=?"
         params = [project_id]
@@ -477,22 +537,22 @@ def get_findings(project_id, limit=50, status=None, category=None):
         rows = conn.execute(q, params).fetchall()
         return [dict(r) for r in rows]
 
-def update_finding(finding_id, status):
+def update_finding(finding_id: int, status: str) -> None:
     with get_db() as conn:
         conn.execute("UPDATE research_findings SET status=? WHERE id=?", (status, finding_id))
 
 
 # === Director Memory ===
 
-def add_director_memory(project_id, kind, content, context_data=None):
+def add_director_memory(project_id: int, kind: str, content: str, context_data: Optional[Dict[str, Any]] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO director_memory (project_id, kind, content, context_data) VALUES (?, ?, ?, ?)",
             (project_id, kind, content, json.dumps(context_data, ensure_ascii=False) if context_data else None)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_director_memories(project_id, kind=None, limit=10):
+def get_director_memories(project_id: int, kind: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
     with get_db() as conn:
         if kind:
             rows = conn.execute(
@@ -509,15 +569,15 @@ def get_director_memories(project_id, kind=None, limit=10):
 
 # === Datasets ===
 
-def add_dataset(project_id, name, source, file_path, schema_json=None, row_count=0):
+def add_dataset(project_id: int, name: str, source: str, file_path: str, schema_json: Optional[Any] = None, row_count: int = 0) -> int:
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO datasets (project_id, name, source, file_path, schema_json, row_count) VALUES (?, ?, ?, ?, ?, ?)",
             (project_id, name, source, file_path, json.dumps(schema_json, ensure_ascii=False) if schema_json else None, row_count)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_datasets(project_id):
+def get_datasets(project_id: int) -> List[Dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM datasets WHERE project_id=? ORDER BY created_at DESC",
@@ -525,7 +585,7 @@ def get_datasets(project_id):
         ).fetchall()
         return [dict(r) for r in rows]
 
-def get_dataset(dataset_id):
+def get_dataset(dataset_id: int) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM datasets WHERE id=?", (dataset_id,)).fetchone()
         return dict(row) if row else None
@@ -537,20 +597,20 @@ def get_dataset(dataset_id):
 
 # === Users ===
 
-def create_user(username, password_hash, email=None, role='user'):
+def create_user(username: str, password_hash: str, email: Optional[str] = None, role: str = 'user') -> int:
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)",
             (username, email, password_hash, role)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_user(user_id):
+def get_user(user_id: int) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         return dict(row) if row else None
 
-def get_user_by_username(username):
+def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
         return dict(row) if row else None
@@ -558,22 +618,26 @@ def get_user_by_username(username):
 
 # === Brains ===
 
-def create_brain(name, seed_question, owner_user_id, config=None, legacy_project_id=None):
+def create_brain(name: str, seed_question: str, owner_user_id: int, config: Optional[Dict[str, Any]] = None,
+                 legacy_project_id: Optional[int] = None,
+                 parent_brain_id: Optional[int] = None, brain_type: str = 'standalone') -> int:
     with get_db() as conn:
         cur = conn.execute(
-            """INSERT INTO brains (name, seed_question, owner_user_id, config_json, legacy_project_id)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO brains (name, seed_question, owner_user_id, config_json, legacy_project_id,
+                                   parent_brain_id, brain_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (name, seed_question, owner_user_id,
-             json.dumps(config or {}, ensure_ascii=False), legacy_project_id)
+             json.dumps(config or {}, ensure_ascii=False), legacy_project_id,
+             parent_brain_id, brain_type)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_brain(brain_id):
+def get_brain(brain_id: int) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM brains WHERE id=?", (brain_id,)).fetchone()
         return dict(row) if row else None
 
-def get_brains(owner_user_id=None, state=None):
+def get_brains(owner_user_id: Optional[int] = None, state: Optional[str] = None) -> List[Dict[str, Any]]:
     with get_db() as conn:
         q = "SELECT * FROM brains WHERE 1=1"
         params = []
@@ -587,7 +651,7 @@ def get_brains(owner_user_id=None, state=None):
         rows = conn.execute(q, params).fetchall()
         return [dict(r) for r in rows]
 
-def update_brain_state(brain_id, state, **kwargs):
+def update_brain_state(brain_id: int, state: str, **kwargs: Any) -> None:
     allowed = {'frontier_score', 'started_at', 'last_active_at'}
     fields = {'state': state}
     for k, v in kwargs.items():
@@ -601,10 +665,13 @@ def update_brain_state(brain_id, state, **kwargs):
 
 # === Cognitive Elements ===
 
-def create_cognitive_element(brain_id, type, content, payload=None, confidence=0.5,
-                             confidence_method=None, status='open', domain_tags=None,
-                             created_by_agent_id=None, source_session_id=None,
-                             superseded_by=None):
+def create_cognitive_element(brain_id: int, type: str, content: str, payload: Optional[Dict[str, Any]] = None,
+                             confidence: float = 0.5,
+                             confidence_method: Optional[str] = None, status: str = 'open',
+                             domain_tags: Optional[List[str]] = None,
+                             created_by_agent_id: Optional[int] = None,
+                             source_session_id: Optional[int] = None,
+                             superseded_by: Optional[int] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO cognitive_elements
@@ -617,14 +684,14 @@ def create_cognitive_element(brain_id, type, content, payload=None, confidence=0
              json.dumps(domain_tags or [], ensure_ascii=False),
              created_by_agent_id, source_session_id, superseded_by)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_cognitive_element(ce_id):
+def get_cognitive_element(ce_id: int) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM cognitive_elements WHERE id=?", (ce_id,)).fetchone()
         return dict(row) if row else None
 
-def count_cognitive_elements(brain_id, type=None, status=None):
+def count_cognitive_elements(brain_id: int, type: Optional[str] = None, status: Optional[str] = None) -> int:
     """统计某大脑下认知元素总数（不受 limit 截断影响），用于前端展示真实总量。"""
     with get_db() as conn:
         q = "SELECT COUNT(*) AS c FROM cognitive_elements WHERE brain_id=?"
@@ -639,7 +706,7 @@ def count_cognitive_elements(brain_id, type=None, status=None):
         return int(row["c"] if row else 0)
 
 
-def count_cognitive_relations(brain_id):
+def count_cognitive_relations(brain_id: int) -> int:
     """统计某大脑下认知关系总数。"""
     with get_db() as conn:
         row = conn.execute(
@@ -649,7 +716,7 @@ def count_cognitive_relations(brain_id):
         return int(row["c"] if row else 0)
 
 
-def get_cognitive_elements(brain_id, type=None, status=None, limit=200):
+def get_cognitive_elements(brain_id: int, type: Optional[str] = None, status: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
     with get_db() as conn:
         q = "SELECT * FROM cognitive_elements WHERE brain_id=?"
         params = [brain_id]
@@ -664,7 +731,7 @@ def get_cognitive_elements(brain_id, type=None, status=None, limit=200):
         rows = conn.execute(q, params).fetchall()
         return [dict(r) for r in rows]
 
-def update_cognitive_element(ce_id, **kwargs):
+def update_cognitive_element(ce_id: int, **kwargs: Any) -> None:
     allowed = {'content', 'payload_json', 'confidence', 'confidence_method',
                'status', 'version', 'superseded_by', 'domain_tags'}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
@@ -686,8 +753,8 @@ def update_cognitive_element(ce_id, **kwargs):
 
 # === Cognitive Relations ===
 
-def create_cognitive_relation(brain_id, src_id, dst_id, relation, strength=0.5,
-                              created_by_agent_id=None):
+def create_cognitive_relation(brain_id: int, src_id: int, dst_id: int, relation: str, strength: float = 0.5,
+                              created_by_agent_id: Optional[int] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT OR IGNORE INTO cognitive_relations
@@ -695,9 +762,9 @@ def create_cognitive_relation(brain_id, src_id, dst_id, relation, strength=0.5,
                VALUES (?, ?, ?, ?, ?, ?)""",
             (brain_id, src_id, dst_id, relation, strength, created_by_agent_id)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_cognitive_relations(brain_id, src_id=None, dst_id=None, relation=None):
+def get_cognitive_relations(brain_id: int, src_id: Optional[int] = None, dst_id: Optional[int] = None, relation: Optional[str] = None) -> List[Dict[str, Any]]:
     with get_db() as conn:
         q = "SELECT * FROM cognitive_relations WHERE brain_id=?"
         params = [brain_id]
@@ -716,8 +783,8 @@ def get_cognitive_relations(brain_id, src_id=None, dst_id=None, relation=None):
 
 # === Roles & Agent Instances ===
 
-def upsert_role(role_key, prompt_template, description=None,
-                default_quota_min=0, default_quota_max=4):
+def upsert_role(role_key: str, prompt_template: str, description: Optional[str] = None,
+                default_quota_min: int = 0, default_quota_max: int = 4) -> Optional[int]:
     with get_db() as conn:
         conn.execute(
             """INSERT INTO roles (role_key, description, prompt_template,
@@ -733,12 +800,12 @@ def upsert_role(role_key, prompt_template, description=None,
         row = conn.execute("SELECT id FROM roles WHERE role_key=?", (role_key,)).fetchone()
         return row['id'] if row else None
 
-def get_role(role_key):
+def get_role(role_key: str) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM roles WHERE role_key=?", (role_key,)).fetchone()
         return dict(row) if row else None
 
-def spawn_agent_instance(brain_id, role_id, role_key, personality=None):
+def spawn_agent_instance(brain_id: int, role_id: int, role_key: str, personality: Optional[Dict[str, Any]] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO agent_instances
@@ -747,16 +814,16 @@ def spawn_agent_instance(brain_id, role_id, role_key, personality=None):
             (brain_id, role_id, role_key,
              json.dumps(personality or {}, ensure_ascii=False))
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def despawn_agent_instance(instance_id):
+def despawn_agent_instance(instance_id: int) -> None:
     with get_db() as conn:
         conn.execute(
             "UPDATE agent_instances SET status='despawned', despawned_at=datetime('now') WHERE id=?",
             (instance_id,)
         )
 
-def get_agent_instances(brain_id, role_key=None, status='active'):
+def get_agent_instances(brain_id: int, role_key: Optional[str] = None, status: Optional[str] = 'active') -> List[Dict[str, Any]]:
     with get_db() as conn:
         q = "SELECT * FROM agent_instances WHERE brain_id=?"
         params = [brain_id]
@@ -772,17 +839,18 @@ def get_agent_instances(brain_id, role_key=None, status='active'):
 
 # === Deliberations ===
 
-def create_deliberation(brain_id, target_ce_id, motion):
+def create_deliberation(brain_id: int, target_ce_id: int, motion: str) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO deliberations (brain_id, target_ce_id, motion)
                VALUES (?, ?, ?)""",
             (brain_id, target_ce_id, motion)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def add_deliberation_turn(deliberation_id, agent_instance_id, round_index,
-                          stance, speech, cited_ce_ids=None, proposed_action=None):
+def add_deliberation_turn(deliberation_id: int, agent_instance_id: int, round_index: int,
+                          stance: str, speech: str, cited_ce_ids: Optional[List[int]] = None,
+                          proposed_action: Optional[str] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO deliberation_turns
@@ -792,9 +860,9 @@ def add_deliberation_turn(deliberation_id, agent_instance_id, round_index,
             (deliberation_id, agent_instance_id, round_index, stance, speech,
              json.dumps(cited_ce_ids or [], ensure_ascii=False), proposed_action)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def add_deliberation_vote(deliberation_id, agent_instance_id, vote, weight):
+def add_deliberation_vote(deliberation_id: int, agent_instance_id: int, vote: str, weight: float) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT OR REPLACE INTO deliberation_votes
@@ -802,9 +870,9 @@ def add_deliberation_vote(deliberation_id, agent_instance_id, vote, weight):
                VALUES (?, ?, ?, ?)""",
             (deliberation_id, agent_instance_id, vote, weight)
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def resolve_deliberation(deliberation_id, outcome, consensus_ce_id=None, dissent_ce_id=None):
+def resolve_deliberation(deliberation_id: int, outcome: str, consensus_ce_id: Optional[int] = None, dissent_ce_id: Optional[int] = None) -> None:
     with get_db() as conn:
         conn.execute(
             """UPDATE deliberations
@@ -817,7 +885,7 @@ def resolve_deliberation(deliberation_id, outcome, consensus_ce_id=None, dissent
 
 # === Events ===
 
-def record_event(event_id, type, payload, brain_id=None):
+def record_event(event_id: str, type: str, payload: Optional[Dict[str, Any]], brain_id: Optional[int] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO events (event_id, brain_id, type, payload_json)
@@ -825,9 +893,9 @@ def record_event(event_id, type, payload, brain_id=None):
             (event_id, brain_id, type,
              json.dumps(payload or {}, ensure_ascii=False))
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_events(brain_id=None, status=None, limit=50):
+def get_events(brain_id: Optional[int] = None, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
     with get_db() as conn:
         q = "SELECT * FROM events WHERE 1=1"
         params = []
@@ -842,14 +910,14 @@ def get_events(brain_id=None, status=None, limit=50):
         rows = conn.execute(q, params).fetchall()
         return [dict(r) for r in rows]
 
-def mark_event_consumed(event_id):
+def mark_event_consumed(event_id: str) -> None:
     with get_db() as conn:
         conn.execute(
             "UPDATE events SET status='consumed', consumed_at=datetime('now') WHERE event_id=?",
             (event_id,)
         )
 
-def record_event_consumption(event_id, agent_instance_id):
+def record_event_consumption(event_id: str, agent_instance_id: int) -> None:
     with get_db() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO event_consumption (event_id, agent_instance_id) VALUES (?, ?)",
@@ -859,7 +927,7 @@ def record_event_consumption(event_id, agent_instance_id):
 
 # === Observer Logs ===
 
-def add_observer_log(brain_id, kind, title, body, cited_ce_ids=None):
+def add_observer_log(brain_id: int, kind: str, title: str, body: str, cited_ce_ids: Optional[List[int]] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO observer_logs (brain_id, kind, title, body, cited_ce_ids)
@@ -867,9 +935,9 @@ def add_observer_log(brain_id, kind, title, body, cited_ce_ids=None):
             (brain_id, kind, title, body,
              json.dumps(cited_ce_ids or [], ensure_ascii=False))
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_observer_logs(brain_id, limit=50):
+def get_observer_logs(brain_id: int, limit: int = 50) -> List[Dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM observer_logs WHERE brain_id=? ORDER BY created_at DESC LIMIT ?",
@@ -880,8 +948,8 @@ def get_observer_logs(brain_id, limit=50):
 
 # === Brain Snapshots ===
 
-def add_brain_snapshot(brain_id, frontier_score, ce_count, relation_count,
-                       active_agents, metrics=None):
+def add_brain_snapshot(brain_id: int, frontier_score: float, ce_count: int, relation_count: int,
+                       active_agents: int, metrics: Optional[Dict[str, Any]] = None) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO brain_snapshots
@@ -890,12 +958,450 @@ def add_brain_snapshot(brain_id, frontier_score, ce_count, relation_count,
             (brain_id, frontier_score, ce_count, relation_count, active_agents,
              json.dumps(metrics or {}, ensure_ascii=False))
         )
-        return cur.lastrowid
+        return int(cur.lastrowid or 0)
 
-def get_brain_snapshots(brain_id, limit=100):
+def get_brain_snapshots(brain_id: int, limit: int = 100) -> List[Dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM brain_snapshots WHERE brain_id=? ORDER BY created_at DESC LIMIT ?",
             (brain_id, limit)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ============================================================
+# Orchestrator 专用查询封装
+# (仅新增；不修改上方既有函数签名)
+# ============================================================
+
+# === Brain 辅助 ===
+
+def increment_brain_think_count(brain_id: int) -> None:
+    """递增指定大脑的 think_count 计数。"""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE brains SET think_count = COALESCE(think_count, 0) + 1 WHERE id = ?",
+            (brain_id,),
+        )
+
+
+def update_brain_config_json(brain_id: int, config_json: str) -> None:
+    """更新大脑的 config_json 字段。"""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE brains SET config_json=? WHERE id=?",
+            (config_json, brain_id),
+        )
+
+
+# === 认知元素辅助 ===
+
+def get_recent_ce_types(brain_id: int, limit: int = 15) -> List[Dict[str, Any]]:
+    """获取最近 N 个 CE 的类型列表（仅含 type 字段）。"""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT type FROM cognitive_elements "
+            "WHERE brain_id=? "
+            "ORDER BY created_at DESC, id DESC "
+            "LIMIT ?",
+            (brain_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_max_ce_id_by_types(
+    brain_id: int, types: Sequence[str]
+) -> int:
+    """获取指定类型集合下最新一条 CE 的 id，未找到返回 0。"""
+    if not types:
+        return 0
+    placeholders = ",".join("?" * len(types))
+    sql = (
+        f"SELECT MAX(id) AS m FROM cognitive_elements "
+        f"WHERE brain_id=? AND type IN ({placeholders})"
+    )
+    with get_db() as conn:
+        row = conn.execute(sql, (brain_id, *types)).fetchone()
+    if row is None or row["m"] is None:
+        return 0
+    return int(row["m"])
+
+
+def get_high_confidence_ces(
+    brain_id: int,
+    ce_type: str,
+    confidence_threshold: float,
+    limit: int = 10,
+    fields: str = "id, confidence, content",
+) -> List[Dict[str, Any]]:
+    """获取高于置信度阈值的指定类型 CE。"""
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT {fields} FROM cognitive_elements "
+            f"WHERE brain_id=? AND type=? AND confidence>? "
+            f"ORDER BY confidence DESC, id DESC LIMIT ?",
+            (brain_id, ce_type, confidence_threshold, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_seed_ce_content(
+    brain_id: int, ce_type: Optional[str] = None
+) -> Optional[str]:
+    """获取大脑的种子 CE内容。传入 ce_type 则只查该类型。"""
+    if ce_type:
+        sql = (
+            "SELECT content FROM cognitive_elements "
+            "WHERE brain_id=? AND type=? ORDER BY id ASC LIMIT 1"
+        )
+        params: Tuple[Any, ...] = (brain_id, ce_type)
+    else:
+        sql = (
+            "SELECT content FROM cognitive_elements "
+            "WHERE brain_id=? ORDER BY id ASC LIMIT 1"
+        )
+        params = (brain_id,)
+    with get_db() as conn:
+        row = conn.execute(sql, params).fetchone()
+    if not row:
+        return None
+    return row["content"]
+
+
+def get_recent_ces_by_type(
+    brain_id: int, ce_type: str, limit: int = 3, fields: str = "id, content"
+) -> List[Dict[str, Any]]:
+    """获取最近 N 个指定类型 CE，默认返回 id+content。"""
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT {fields} FROM cognitive_elements "
+            f"WHERE brain_id=? AND type=? ORDER BY id DESC LIMIT ?",
+            (brain_id, ce_type, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_essence_ces_for_master(
+    brain_id: int,
+    confidence_threshold: float = 0.7,
+    types: Sequence[str] = ("conclusion", "consensus", "insight"),
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    """获取可上报主脑的高置信度精华 CE 列表。"""
+    if not types:
+        return []
+    placeholders = ",".join("?" * len(types))
+    sql = (
+        f"SELECT id, type, content, confidence "
+        f"FROM cognitive_elements "
+        f"WHERE brain_id=? AND type IN ({placeholders}) AND confidence>? "
+        f"ORDER BY confidence DESC LIMIT ?"
+    )
+    with get_db() as conn:
+        rows = conn.execute(
+            sql, (brain_id, *types, confidence_threshold, limit)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def count_recent_evidence_by_hash(
+    brain_id: int, query_hash: str, minutes: int = 5
+) -> int:
+    """统计近 N 分钟内 payload 包含 query_hash 的 evidence CE 数量（防工具重复）。"""
+    sql = (
+        "SELECT COUNT(*) AS cnt FROM cognitive_elements "
+        "WHERE brain_id=? AND type='evidence' "
+        "AND payload_json LIKE ? "
+        f"AND created_at > datetime('now', '-{int(minutes)} minutes')"
+    )
+    with get_db() as conn:
+        row = conn.execute(sql, (brain_id, f"%{query_hash}%")).fetchone()
+    if not row:
+        return 0
+    return int(row["cnt"])
+
+
+def get_ces_basic_by_statuses(
+    brain_id: int, statuses: Sequence[str]
+) -> List[Dict[str, Any]]:
+    """按状态集合获取 CE 基础字段（id/type/confidence/status）。"""
+    if not statuses:
+        return []
+    placeholders = ",".join("?" * len(statuses))
+    sql = (
+        f"SELECT id, type, confidence, status FROM cognitive_elements "
+        f"WHERE brain_id=? AND status IN ({placeholders})"
+    )
+    with get_db() as conn:
+        rows = conn.execute(sql, (brain_id, *statuses)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_ces_id_confidence_by_status(
+    brain_id: int, status: str
+) -> List[Dict[str, Any]]:
+    """获取指定状态 CE 的 id+confidence（用于作为传播源）。"""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, confidence FROM cognitive_elements "
+            "WHERE brain_id=? AND status=?",
+            (brain_id, status),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def find_open_hypothesis_to_followup(
+    brain_id: int,
+    conf_low: float = 0.4,
+    conf_high: float = 0.8,
+    cooldown_minutes: int = 5,
+) -> Optional[Dict[str, Any]]:
+    """寻找一个未被验证的 open hypothesis（用于 investigator 跟进）。
+
+    过滤：
+    1) 未被 evidence/counter_evidence/inference 以 supports/refutes/derives_from 关系指向；
+    2) 近 cooldown_minutes 内未被关联的 inference/evidence 跟进过。
+    """
+    sql = (
+        "SELECT ce.id, SUBSTR(ce.content,1,50) AS title, ce.confidence "
+        "FROM cognitive_elements ce "
+        "WHERE ce.brain_id = ? "
+        "  AND ce.type = 'hypothesis' "
+        "  AND ce.confidence BETWEEN ? AND ? "
+        "  AND (ce.status = 'open' OR ce.status IS NULL) "
+        "  AND ce.id NOT IN ( "
+        "      SELECT cr.dst_id FROM cognitive_relations cr "
+        "      JOIN cognitive_elements src ON src.id = cr.src_id "
+        "      WHERE cr.brain_id = ? "
+        "        AND src.type IN ('evidence', 'counter_evidence', 'inference') "
+        "        AND cr.relation IN ('supports', 'refutes', 'derives_from') "
+        "  ) "
+        "  AND ce.id NOT IN ( "
+        "      SELECT CAST(json_extract(inf.payload_json, '$.target_hypothesis_id') AS INTEGER) "
+        "      FROM cognitive_elements inf "
+        "      WHERE inf.brain_id = ? "
+        "        AND inf.type IN ('inference', 'evidence') "
+        f"        AND inf.created_at > datetime('now', '-{int(cooldown_minutes)} minutes') "
+        "        AND json_extract(inf.payload_json, '$.target_hypothesis_id') IS NOT NULL "
+        "  ) "
+        "ORDER BY RANDOM() LIMIT 1"
+    )
+    with get_db() as conn:
+        row = conn.execute(
+            sql, (brain_id, conf_low, conf_high, brain_id, brain_id)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def find_next_open_question_to_resolve(
+    brain_id: int, exclude_ids: Optional[Sequence[int]] = None
+) -> Optional[Dict[str, Any]]:
+    """挑选最老一个未被回答型关系指向且不在排除集中的 open question。"""
+    exclude_ids = list(exclude_ids or [])
+    cooldown_clause = ""
+    cooldown_params: List[Any] = []
+    if exclude_ids:
+        placeholders = ",".join("?" * len(exclude_ids))
+        cooldown_clause = f" AND ce.id NOT IN ({placeholders})"
+        cooldown_params = list(exclude_ids)
+
+    sql = (
+        "SELECT ce.id, SUBSTR(ce.content,1,200) AS content, ce.created_at "
+        "FROM cognitive_elements ce "
+        "WHERE ce.brain_id = ? "
+        "  AND ce.type = 'question' "
+        "  AND ce.status = 'open' "
+        "  AND ce.id NOT IN ("
+        "      SELECT cr.dst_id FROM cognitive_relations cr "
+        "      JOIN cognitive_elements src ON src.id = cr.src_id "
+        "      WHERE cr.brain_id = ? "
+        "        AND src.type IN ('evidence','inference','conclusion') "
+        "        AND cr.relation IN ('answers','derives_from','supports')"
+        "  )"
+        f"{cooldown_clause}"
+        " ORDER BY ce.created_at ASC LIMIT 1"
+    )
+    params: List[Any] = [brain_id, brain_id, *cooldown_params]
+    with get_db() as conn:
+        row = conn.execute(sql, tuple(params)).fetchone()
+    return dict(row) if row else None
+
+
+def mark_questions_answered(
+    brain_id: int, candidate_ids: Iterable[int]
+) -> List[int]:
+    """筛选仍为 open 的 question 并批量标记为 answered，返回被标记的 id 列表。"""
+    ids_list = [int(i) for i in candidate_ids]
+    if not ids_list:
+        return []
+    placeholders = ",".join("?" * len(ids_list))
+    select_sql = (
+        f"SELECT id FROM cognitive_elements "
+        f"WHERE id IN ({placeholders}) "
+        f"  AND brain_id = ? AND type='question' AND status='open'"
+    )
+    with get_db() as conn:
+        rows = conn.execute(select_sql, (*ids_list, brain_id)).fetchall()
+        resolved_ids = [int(r["id"]) for r in rows]
+        if not resolved_ids:
+            return []
+        update_placeholders = ",".join("?" * len(resolved_ids))
+        conn.execute(
+            f"UPDATE cognitive_elements SET status='answered', "
+            f"updated_at=datetime('now') WHERE id IN ({update_placeholders})",
+            tuple(resolved_ids),
+        )
+    return resolved_ids
+
+
+# === 关系辅助 ===
+
+def get_relations_by_types(
+    brain_id: int,
+    relations: Sequence[str],
+    fields: str = "src_id, dst_id, relation",
+) -> List[Dict[str, Any]]:
+    """获取指定关系类型的所有边。"""
+    if not relations:
+        return []
+    placeholders = ",".join("?" * len(relations))
+    sql = (
+        f"SELECT {fields} FROM cognitive_relations "
+        f"WHERE brain_id=? AND relation IN ({placeholders})"
+    )
+    with get_db() as conn:
+        rows = conn.execute(sql, (brain_id, *relations)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_all_relations_basic(brain_id: int) -> List[Dict[str, Any]]:
+    """获取某大脑的所有关系（src_id/dst_id/relation/strength）。"""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT src_id, dst_id, relation, strength FROM cognitive_relations "
+            "WHERE brain_id=?",
+            (brain_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def count_supports_per_dst(
+    brain_id: int, dst_ids: Sequence[int]
+) -> Dict[int, int]:
+    """统计每个目标 CE 收到的 supports/derives_from 关系数。"""
+    if not dst_ids:
+        return {}
+    placeholders = ",".join("?" * len(dst_ids))
+    sql = (
+        f"SELECT dst_id, COUNT(*) AS cnt "
+        f"FROM cognitive_relations "
+        f"WHERE brain_id=? AND relation IN ('supports','derives_from') "
+        f"AND dst_id IN ({placeholders}) "
+        f"GROUP BY dst_id"
+    )
+    with get_db() as conn:
+        rows = conn.execute(sql, [brain_id, *dst_ids]).fetchall()
+    return {int(r["dst_id"]): int(r["cnt"]) for r in rows}
+
+
+def get_supporting_src_ids(
+    brain_id: int, dst_id: int, limit: int = 5
+) -> List[int]:
+    """获取支持某 CE 的上游 src_id 列表（supports/derives_from）。"""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT src_id FROM cognitive_relations "
+            "WHERE brain_id=? AND relation IN ('supports','derives_from') "
+            "AND dst_id=? LIMIT ?",
+            (brain_id, dst_id, limit),
+        ).fetchall()
+    return [int(r["src_id"]) for r in rows]
+
+
+# === 博弈辅助 ===
+
+def check_existing_active_deliberation(target_ce_id: int) -> Optional[int]:
+    """检查某 CE 是否已有未结束的博弈，返回博弈 id 或 None。"""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM deliberations "
+            "WHERE target_ce_id = ? AND status != 'resolved'",
+            (target_ce_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return int(row["id"])
+
+
+def get_last_deliberation_started_at(
+    brain_id: int, target_ce_ids: Sequence[int]
+) -> Dict[int, str]:
+    """获取指定 target_ce_ids 上最近一次博弈的 started_at。"""
+    if not target_ce_ids:
+        return {}
+    placeholders = ",".join("?" * len(target_ce_ids))
+    sql = (
+        f"SELECT target_ce_id, MAX(started_at) AS last_at "
+        f"FROM deliberations "
+        f"WHERE brain_id=? AND target_ce_id IN ({placeholders}) "
+        f"GROUP BY target_ce_id"
+    )
+    with get_db() as conn:
+        rows = conn.execute(sql, [brain_id, *target_ce_ids]).fetchall()
+    return {int(r["target_ce_id"]): r["last_at"] for r in rows}
+
+
+def get_active_deliberation_targets(
+    brain_id: int, target_ce_ids: Sequence[int]
+) -> Set[int]:
+    """获取指定 CE 集合中仍有活跃博弈的 target_ce_id 集合。"""
+    if not target_ce_ids:
+        return set()
+    placeholders = ",".join("?" * len(target_ce_ids))
+    sql = (
+        f"SELECT target_ce_id FROM deliberations "
+        f"WHERE brain_id=? AND status != 'resolved' "
+        f"AND target_ce_id IN ({placeholders})"
+    )
+    with get_db() as conn:
+        rows = conn.execute(sql, [brain_id, *target_ce_ids]).fetchall()
+    return {int(r["target_ce_id"]) for r in rows}
+
+
+def create_evidence_with_relation(
+    brain_id: int,
+    content: str,
+    confidence: float,
+    payload_json: str,
+    related_dst_id: Optional[int] = None,
+    relation: str = "derives_from",
+    relation_strength: float = 1.0,
+    status: str = "open",
+    created_by_agent_id: Optional[int] = None,
+) -> int:
+    """原子化插入 evidence CE，同事务可选建立一条关系。返回新 CE 的 id。"""
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO cognitive_elements "
+            "(brain_id, type, content, confidence, status, created_by_agent_id, payload_json) "
+            "VALUES (?, 'evidence', ?, ?, ?, ?, ?)",
+            (brain_id, content, confidence, status, created_by_agent_id, payload_json),
+        )
+        new_ce_id = cur.lastrowid
+        if related_dst_id is not None and new_ce_id is not None:
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO cognitive_relations "
+                    "(brain_id, src_id, dst_id, relation, strength, created_by_agent_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        brain_id, new_ce_id, related_dst_id, relation,
+                        relation_strength, created_by_agent_id,
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "create_evidence_with_relation 关系插入失败 src=%s dst=%s",
+                    new_ce_id, related_dst_id,
+                )
+    return int(new_ce_id) if new_ce_id is not None else 0

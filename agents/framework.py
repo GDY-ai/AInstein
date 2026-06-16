@@ -174,6 +174,11 @@ class ThinkingResult:
     """是否需要发起一次博弈讨论；非 None 时形如
     ``{"target_ce_id": int, "motion": str}``。"""
 
+    tool_proposal: Optional[Dict[str, Any]] = None
+    """工具调用提案；非 None 时形如
+    ``{"tool": str, "params": dict, "reason": str}``，由 orchestrator 接管轻量级
+    博弈与执行，结果以 ``evidence`` CE 注入。"""
+
     raw_text: str = ""
     """LLM 原始输出文本（调试用）。"""
 
@@ -311,6 +316,42 @@ class RoleRegistry:
 
 
 # ---------- prompt 构建辅助 ----------
+# 角色专属行为补充（被 _build_role_prompt 插入到「认知元素类型」之后）
+# critic 需要主动发起博弈、防止「虚假和谐」——宁可多质疑一次也不能放过可疑结论。
+_ROLE_BEHAVIOR_ADDONS: Dict[str, str] = {
+    "critic": """
+# 行为触发规则
+- 当你看到一个 hypothesis 或 conclusion 的置信度 < 0.7 但没有对应的 counter_evidence 时，主动提出质疑
+- 当你看到 consensus 是在缺乏充分证据支撑的情况下达成的，必须产出 dissent
+- 你的存在价值是防止「虚假和谐」——宁可多质疑一次，也不可放过可疑的结论
+- 在 deliberation_request 中主动发起博弈请求，当你认为某个 CE 的结论不够严谨时
+
+# 输出偏好
+优先产出 counter_evidence 和 dissent，而非 argument。你的每个产出都应该让系统更诚实。
+""",
+    "reasoner": """
+# 建设性行为
+- 当一个 conclusion 有 ≥2 条证据支撑且逻辑链完整时，主动在 deliberation_request 中提出“确认共识”
+- 你的产出应推动知识积累：inference → conclusion → confirmed theory
+- 在博弈中遇到有证据支撑的结论，态度应当是「这成立，因为…」而非无端怀疑
+- 遇到确认式博弈（议题含“是否确认其为已建立的理论”）时，若证据足够，优先选 stance='confirm' 或 'support'
+""",
+    "synthesizer": """
+# 建设性行为
+- 你是知识建构的主力。当看到多条 evidence 支持同一方向时，果断产出 conclusion
+- 主动发起 deliberation_request 来确认你的 conclusion，让其他 Agent 表态支持
+- 目标：让知识从碎片变为确定的理论（open conclusion → confirmed theory）
+- 遇到确认式博弈时，若证据链完整，主动用 stance='confirm' 拍板定论
+""",
+    "investigator": """
+# 建设性行为
+- 当你收集到的 evidence 强力支持某个 hypothesis 时，明确表态支持
+- 在 deliberation 中遇到有证据支撑的结论，优先选择 support/confirm 而非 oppose
+- 确认式博弈中若证据与议题一致，应明确肯定，不要无端保留
+""",
+}
+
+
 def _build_role_prompt(role_name: str, config: Dict[str, Any]) -> str:
     """根据角色配置生成默认 system prompt 模板。
 
@@ -325,6 +366,9 @@ def _build_role_prompt(role_name: str, config: Dict[str, Any]) -> str:
     pref_types = config.get("preferred_ce_types") or []
     pref_types_str = "、".join(pref_types) if pref_types else "（无）"
 
+    # 角色专属行为块（重启后仍生效 —— 即使 DB 被重置/丢失仍会从这里重建）
+    role_addon = _ROLE_BEHAVIOR_ADDONS.get(role_name, "")
+
     template = f"""你是硅基大脑中的一个【{role_cn}】Agent（角色 key = {role_name}）。
 
 # 你的视角与职责
@@ -335,11 +379,33 @@ def _build_role_prompt(role_name: str, config: Dict[str, Any]) -> str:
 
 # 你最擅长产出的认知元素类型
 {pref_types_str}
+{role_addon}
 
 {{personality_block}}
 
 # 输入上下文
 {{context_block}}
+
+# 工具调用能力（可选，仅当确实需要外部数据时使用）
+当你判断推进问题解答必须依赖外部数据，且现有上下文无法支撑你产出可靠的 evidence 时，
+可以在输出中填写 tool_proposal 字段（不需要时保持 null）：
+
+"tool_proposal": {{{{
+  "tool": "工具名（必须来自下列白名单）",
+  "params": {{{{ ... 该工具要求的参数 ... }}}},
+  "reason": "为什么必须用这个工具，以及预期获得什么（<50字）"
+}}}}
+
+可用工具白名单：
+- web_search(query, num_results?)        通用网页搜索
+- wikipedia_search(query, lang?)         维基百科条目
+- arxiv_search(query, max_results?)      arXiv 论文检索
+- google_trends(query, geo?, timeframe?) Google Trends 热度
+
+约束：
+- 一次思考最多提一个 tool_proposal；优先在确无现成证据时才使用。
+- 提案会被其他 Agent 投票审核；通过后系统自动执行并把结果作为 evidence CE 注入知识图谱。
+- 不要用工具回答你已经知道的常识问题。
 
 # 输出格式（严格 JSON，禁止任何额外文字）
 请基于以上上下文进行一次思考，并按下面的 JSON Schema 严格输出：
@@ -365,7 +431,8 @@ def _build_role_prompt(role_name: str, config: Dict[str, Any]) -> str:
     }}}}
   ],
   "suggested_events": [],
-  "deliberation_request": null
+  "deliberation_request": null,
+  "tool_proposal": null
 }}}}
 ```
 
@@ -536,7 +603,7 @@ class BaseAgent:
             "严格输出如下 JSON：\n"
             "```json\n"
             "{\n"
-            '  "stance": "propose | support | oppose | abstain",\n'
+            '  "stance": "propose（新提议）| support（赞同）| confirm（强确认，认为结论已充分建立）| oppose（反对）| abstain（弃权）",\n'
             '  "speech": "你的发言（中文，<200 字，必须引用至少 1 个已有 CE id 作为依据）",\n'
             '  "cited_ce_ids": [12, 45],\n'
             '  "proposed_action": "downgrade_confidence | upgrade_confidence | mark_invalid | open_subquestion | null"\n'
@@ -564,7 +631,7 @@ class BaseAgent:
             "cited_ce_ids": parsed.get("cited_ce_ids") or [],
             "proposed_action": parsed.get("proposed_action"),
         }
-        if turn["stance"] not in {"propose", "support", "oppose", "abstain"}:
+        if turn["stance"] not in {"propose", "support", "confirm", "oppose", "abstain"}:
             turn["stance"] = "abstain"
         if not isinstance(turn["cited_ce_ids"], list):
             turn["cited_ce_ids"] = []
@@ -644,13 +711,13 @@ class BaseAgent:
         )
 
     def _build_user_prompt(self, context: ThinkingContext) -> str:
-        """生成 user 消息：聚焦研究课题，避免暴露系统术语。"""
-        topic = (context.research_topic or "").strip() or "（未提供研究课题，请基于上下文中的相关认知元素推断真实课题）"
+        """生成 user 消息：聚焦解决问题，避免暴露系统术语。"""
+        topic = (context.research_topic or "").strip() or "（未提供问题，请基于上下文推断）"
         return (
-            f"你正在研究的课题是：\n《{topic}》\n\n"
-            f"请围绕这个课题本身展开真正的研究性思考——产出与课题内容直接相关的"
-            f"事实、证据、假设、推论或新的子问题。不要分析问题的形式、措辞或任何词语的隐喻。"
-            f"严格按 system prompt 中约定的 JSON Schema 输出，禁止输出任何 JSON 之外的文字。"
+            f"你正在解决的问题是：\n《{topic}》\n\n"
+            f"你的目标是推进这个问题的解答 —— 产出能直接或间接回答该问题的"
+            f"证据、推论、结论或必要的子问题。每个产出都应让答案更近一步。"
+            f"\n严格按 system prompt 中约定的 JSON Schema 输出，禁止输出任何 JSON 之外的文字。"
         )
 
     # ---------- 解析 LLM 输出 ----------
@@ -677,6 +744,15 @@ class BaseAgent:
         deliberation_request = parsed.get("deliberation_request")
         if deliberation_request is not None and not isinstance(deliberation_request, dict):
             deliberation_request = None
+        tool_proposal = parsed.get("tool_proposal")
+        if tool_proposal is not None and not isinstance(tool_proposal, dict):
+            logger.warning("tool_proposal 格式错误 (期望dict，得到%s): %s",
+                           type(tool_proposal).__name__, str(tool_proposal)[:100])
+            tool_proposal = None
+        elif tool_proposal is not None:
+            logger.info("Agent[%s] 输出 tool_proposal: tool=%s reason=%s",
+                        self.instance_id, tool_proposal.get("tool"),
+                        str(tool_proposal.get("reason", ""))[:50])
 
         # 过滤掉非法 type
         new_elements = [e for e in new_elements
@@ -689,6 +765,7 @@ class BaseAgent:
             new_relations=new_relations,
             suggested_events=suggested_events,
             deliberation_request=deliberation_request,
+            tool_proposal=tool_proposal,
         )
 
     # ---------- 持久化 + 事件发布 ----------
@@ -956,14 +1033,20 @@ _DEFAULT_ROLE_EVENT_INTEREST: Dict[str, set] = {
         EventTypes.BRAIN_CREATED,
     },
     "investigator": {
+        EventTypes.USER_SEED_QUESTION_SUBMITTED,
         EventTypes.CE_QUESTION_RAISED,
         EventTypes.CE_HYPOTHESIS_PROPOSED,
     },
     "reasoner": {
+        EventTypes.USER_SEED_QUESTION_SUBMITTED,
         EventTypes.CE_EVIDENCE_COLLECTED,
         EventTypes.CE_HYPOTHESIS_SATURATED,
     },
     "critic": {
+        EventTypes.CE_CREATED,                    # 新 CE 产出时评估
+        EventTypes.USER_SEED_QUESTION_SUBMITTED,  # 首轮也参与
+        EventTypes.CE_HYPOTHESIS_PROPOSED,        # hypothesis 提出时质疑
+        EventTypes.CE_QUESTION_RAISED,            # 子问题提出时审视
         EventTypes.CE_CONCLUSION_PROPOSED,
         EventTypes.CE_CONSENSUS_REACHED,
         EventTypes.CE_CHALLENGED,

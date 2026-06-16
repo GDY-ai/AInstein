@@ -5,6 +5,7 @@ import BrainView from './pages/BrainView'
 import Login from './pages/Login'
 import BrainList from './pages/BrainList'
 import CreateBrain from './pages/CreateBrain'
+import BigScreen from './pages/BigScreen'
 import { getToken } from './api'
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -47,6 +48,7 @@ export default function App() {
           </RequireAuth>
         }
       />
+      <Route path="/admin/bigscreen" element={<BigScreen />} />
       {/* Legacy routes preserved for backward compatibility */}
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/project/:id" element={<ProjectDetail />} />

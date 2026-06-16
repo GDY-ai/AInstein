@@ -1,9 +1,19 @@
-"""AInstein 论文生成器 - 将硅基大脑的认知元素综合为结构化研究论文。"""
+"""AInstein 论文生成器 - 将硅基大脑的认知元素综合为结构化研究论文。
+
+PDF 渲染引擎使用 WeasyPrint（基于 Cairo / Pango），相比早期的
+pandoc + wkhtmltopdf 方案：
+ - 原生支持 CSS 3 分页规则、Web 字体、@page 装饰
+ - 通过系统已安装的 Noto Sans/Serif CJK 字体彻底解决中文乱码
+ - 纯 Python 调用，无需依赖额外二进制
+"""
 import os
 import logging
-import subprocess
 import json
 from datetime import datetime
+
+import markdown2
+from weasyprint import HTML, CSS
+from weasyprint.text.fonts import FontConfiguration
 
 import database as db
 from agents.llm_client import call_llm
@@ -157,7 +167,7 @@ def _build_mega_prompt(brain: dict, ces: list, relations: list,
 请输出一篇严格结构化的 Markdown 格式研究论文，结构如下：
 
 ```
-# [从种子问题提炼的论文标题]
+# 关于「{seed_question}」的研究报告
 
 ## 摘要
 （200字以内，精炼概括核心发现和结论，需给出明确立场）
@@ -194,53 +204,100 @@ def _build_mega_prompt(brain: dict, ces: list, relations: list,
 5. 思维演化部分要讲"故事"：有起承转合
 6. 全文使用中文
 7. 直接输出 Markdown 正文，不要包裹在代码块中
+8. **一级标题（# 开头）必须严格使用如下格式，不要自行发挥**：
+   `# 关于「{seed_question}」的研究报告`
+   其中 `{{seed_question}}` 必须原样替换为上文给出的种子问题文本（包含书名号「」），例如种子问题为"硅基生命的必要条件"时，标题必须为：`# 关于「硅基生命的必要条件」的研究报告`
 """
     return prompt
 
 
-def _markdown_to_pdf(md_path: str, pdf_path: str) -> bool:
-    """使用 pandoc + wkhtmltopdf 将 Markdown 转为 PDF。"""
-    try:
-        cmd = [
-            'pandoc', md_path,
-            '-o', pdf_path,
-            '--pdf-engine=wkhtmltopdf',
-            '--css', CSS_PATH,
-            '-V', 'margin-top=25mm',
-            '-V', 'margin-bottom=25mm',
-            '-V', 'margin-left=25mm',
-            '-V', 'margin-right=25mm',
-            '--metadata', f'title=AInstein Research Report',
-            '-f', 'markdown',
-            '-t', 'html5',
-        ]
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120
+def _build_html_document(markdown_text: str, title: str, header_text: str = '') -> str:
+    """将 Markdown 文本转换为带语义标签的完整 HTML 文档。
+
+    Args:
+        markdown_text: 论文 Markdown 正文。
+        title: HTML <title> 标签内容（同时用于 PDF 元数据）。
+        header_text: 注入到页眉 @top-left 的文字（一般为种子问题相关文案）。
+            为空时回退到 CSS 默认的 "AInstein · 硅基大脑研究报告"。
+    """
+    html_body = markdown2.markdown(
+        markdown_text,
+        extras=[
+            'tables',
+            'fenced-code-blocks',
+            'header-ids',
+            'toc',
+            'footnotes',
+            'cuddled-lists',
+            'break-on-newline',
+            'strike',
+            'task_list',
+        ],
+    )
+    safe_title = (title or 'AInstein Research Report').replace('<', '&lt;').replace('>', '&gt;')
+
+    # 动态注入页眉文字（覆盖 paper_template.css 中的硬编码 content）
+    header_style = ''
+    if header_text:
+        # CSS string 中需转义双引号和反斜杠
+        safe_header = header_text.replace('\\', '\\\\').replace('"', '\\"')
+        header_style = (
+            '<style>\n'
+            '@page { @top-left { content: "' + safe_header + '"; } }\n'
+            '@page :first { @top-left { content: none; } }\n'
+            '</style>'
         )
-        if result.returncode != 0:
-            logger.error(f"pandoc failed: {result.stderr}")
-            # 尝试备用方案：不使用 CSS
-            cmd_fallback = [
-                'pandoc', md_path,
-                '-o', pdf_path,
-                '--pdf-engine=wkhtmltopdf',
-                '-V', 'margin-top=25mm',
-                '-V', 'margin-bottom=25mm',
-                '-V', 'margin-left=25mm',
-                '-V', 'margin-right=25mm',
-            ]
-            result2 = subprocess.run(
-                cmd_fallback, capture_output=True, text=True, timeout=120
-            )
-            if result2.returncode != 0:
-                logger.error(f"pandoc fallback also failed: {result2.stderr}")
-                return False
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>{safe_title}</title>
+    {header_style}
+</head>
+<body>
+<article class="paper">
+{html_body}
+</article>
+</body>
+</html>"""
+
+
+def _markdown_to_pdf(md_path: str, pdf_path: str,
+                     title: str = 'AInstein Research Report',
+                     header_text: str = '') -> bool:
+    """使用 WeasyPrint 将 Markdown 文件渲染为高保真 PDF。
+
+    渲染流程：
+        Markdown → HTML（markdown2） → PDF（WeasyPrint + paper_template.css）
+    所有中文字体通过系统已安装的 Noto Sans/Serif CJK 嵌入到 PDF 内部，
+    确保跨平台显示一致、无乱码。
+    """
+    try:
+        with open(md_path, 'r', encoding='utf-8') as f:
+            md_text = f.read()
+
+        html_doc = _build_html_document(md_text, title, header_text=header_text)
+
+        font_config = FontConfiguration()
+        stylesheets = []
+        if os.path.exists(CSS_PATH):
+            stylesheets.append(CSS(filename=CSS_PATH, font_config=font_config))
+        else:
+            logger.warning(f"CSS template not found: {CSS_PATH}, using default styles")
+
+        HTML(string=html_doc).write_pdf(
+            pdf_path,
+            stylesheets=stylesheets,
+            font_config=font_config,
+            presentational_hints=True,
+            optimize_images=True,
+        )
+
+        logger.info(f"PDF 生成成功: {pdf_path}")
         return True
-    except subprocess.TimeoutExpired:
-        logger.error("pandoc timed out")
-        return False
-    except FileNotFoundError:
-        logger.error("pandoc not found in PATH")
+    except Exception as e:
+        logger.exception(f"WeasyPrint PDF 生成失败: {e}")
         return False
 
 
@@ -336,7 +393,18 @@ def generate_paper(brain_id: int, task_id: str) -> str:
         logger.info(f"Paper markdown saved: {md_path}")
 
         # 4. 转换为 PDF
-        pdf_success = _markdown_to_pdf(md_path, pdf_path)
+        seed_question = (brain.get('seed_question') or '').strip()
+        if seed_question:
+            pdf_title = f"关于「{seed_question}」的研究报告"
+            header_text = f"AInstein · 关于「{seed_question}」的研究报告"
+        else:
+            pdf_title = brain.get('name') or f"AInstein Brain #{brain_id} 研究报告"
+            header_text = ''
+        pdf_success = _markdown_to_pdf(
+            md_path, pdf_path,
+            title=pdf_title,
+            header_text=header_text,
+        )
 
         if pdf_success and os.path.exists(pdf_path):
             _save_task(task_id, {

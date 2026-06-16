@@ -2,12 +2,25 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, getToken } from '../api'
 
-const SAMPLE_QUESTIONS = [
-  '人类意识为什么会涌现？',
-  '加密货币会成为主流货币吗？',
-  '通用人工智能何时会到来？',
-  '癌症是否有共同的根本机制？',
+const ALL_SAMPLES = [
+  '如果宇宙是一个模拟程序，我们能找到什么证据？',
+  '为什么所有文明最终都走向官僚化？',
+  '量子纠缠能否解释意识的非局域性？',
+  '人类语言的起源是否与音乐同源？',
+  '暗物质会不会是另一个维度的普通物质？',
+  '为什么生物演化会收敛到相似的形态？',
+  '数学是被发现的还是被发明的？',
+  '文明的平均寿命是多少年？费米悖论的最佳解释是什么？',
+  '如果时间是离散的而非连续的，物理学需要怎样重写？',
+  '社交媒体是否正在改变人类大脑的结构？',
+  'mRNA 技术能否让人类实现器官再生？',
+  '城市为什么会遵循齐普夫定律？这背后是什么机制？',
+  '为什么睡眠中的大脑比清醒时更活跃？',
+  '通货膨胀的本质是货币现象还是权力现象？',
+  '如果 AI 能自主做科研，科学家的角色会变成什么？',
+  '人类能否在100年内实现可控核聚变商业化？',
 ]
+const SAMPLE_QUESTIONS = ALL_SAMPLES.sort(() => Math.random() - 0.5).slice(0, 4)
 
 export default function CreateBrain() {
   const navigate = useNavigate()

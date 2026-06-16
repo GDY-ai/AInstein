@@ -110,7 +110,13 @@ OBSERVER_SYSTEM_PROMPT: str = """你是一个硅基大脑的【观察员（Obser
   "importance": 0.0
 }
 ```
-- ``importance`` 取 0.0~1.0，反映该报告的关键程度（>=0.6 视为推送给用户）。
+- ``importance`` 取 0.0~1.0，反映该报告的关键程度。**校准标准**：
+  - 0.9~1.0 = 重大突破（首次产出 conclusion 且 confidence≥0.7、推翻核心假设、发现全新研究方向）
+  - 0.7~0.9 = 显著进展（关键博弈达成共识、新证据链闭环、假设被确认或被推翻）
+  - 0.5~0.7 = 实质推进（有效的新假设/推论产出、工具调用获得有价值结果）
+  - 0.3~0.5 = 常规积累（普通 CE 增量、小幅修正、重复性探索）
+  - 0.0~0.3 = 低活跃/停滞（无新发现、仅在已知范围内循环）
+  - **注意**：不要害怕给高分——真正的突破性时刻就应该是 0.9+。也不要虚高——平淡时段就给 0.3~0.4。
 """
 
 
@@ -986,9 +992,12 @@ def get_observer_log(log_id: int) -> Optional[Dict[str, Any]]:
 
 
 def get_latest_summary(brain_id: int) -> Optional[Dict[str, Any]]:
-    """获取最新一条观察员日志（不区分 kind，按时间最新）。"""
-    rows = get_observer_logs(brain_id, limit=1)
-    return rows[0] if rows else None
+    """获取最新一条观察员总结日志（排除 thinking_summary 等非观察员类型）。"""
+    rows = get_observer_logs(brain_id, limit=20)
+    for row in rows:
+        if row.get('kind') != 'thinking_summary':
+            return row
+    return None
 
 
 __all__ = [

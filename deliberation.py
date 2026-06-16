@@ -114,9 +114,14 @@ _ROLE_PREFERRED_CE: Dict[str, set] = {
 _STANCE_TO_VOTE: Dict[str, str] = {
     "propose": "agree",
     "support": "agree",
+    "confirm": "agree",  # 明确确认，等同赞成（用于建设性确认博弈）
     "oppose": "disagree",
     "abstain": "abstain",
 }
+
+#: 确认式博弈的 topic 标识前缀（与 orchestrator._scan_and_trigger_confirmation_deliberation
+#: 生成的议题保持一致；用于 _is_confirmation_mode 识别）
+_CONFIRMATION_TOPIC_MARKER: str = "是否确认其为已建立的理论"
 
 
 class DeliberationEngine:
@@ -227,12 +232,22 @@ class DeliberationEngine:
         round_turns: List[Dict[str, Any]] = []
 
         # 建设性综合博弈：在 topic 前面注入引导语，让 Agent 倾向"综合"而非"推翻"
+        # 确认式博弈：注入建设性引导，让 Agent 倾向 confirm/support 而非无端质疑
         if self._is_synthesis_mode(topic):
             guidance = (
                 "这是一场建设性综合博弈。请评估上述认知元素是否可以被合理地综合"
                 "为一个更高层次的结论。如果同意综合，请用 stance='propose' 或 "
                 "'support'，并在发言中提出综合后的核心表述。如果认为它们差异太大"
                 "无法综合，请用 stance='oppose' 并说明原因。"
+            )
+            agent_topic = f"{guidance}\n\n{topic}"
+        elif self._is_confirmation_mode(topic):
+            guidance = (
+                "这是一场建设性确认博弈。议题中的结论已获多条证据支撑，请依据证据"
+                "判断其是否可被确认为已建立的理论。若证据足够、逻辑闭合，请用 "
+                "stance='confirm'（强确认）或 'support'；若赞同但证据仅部分支持，用 "
+                "'support'；仅在发现实质性缺陷时使用 'oppose' 并明确指出瑕疵或反证。"
+                "默认倾向是：有证据支撑 → 肯定。"
             )
             agent_topic = f"{guidance}\n\n{topic}"
         else:
@@ -474,7 +489,90 @@ class DeliberationEngine:
                     "[Deliberation %s] 发布 CE 派生事件失败",
                     deliberation_id,
                 )
+
+        # 博弈结束后更新 target CE 的状态
+        try:
+            self._update_target_ce_status(
+                trigger_ce_id=trigger_ce_id,
+                outcome=outcome,
+                weighted_summary=weighted_summary,
+                is_synthesis=self._is_synthesis_mode(topic),
+                deliberation_mode=self._detect_mode(topic),
+            )
+        except Exception:
+            logger.exception("[Deliberation] 更新 target CE 状态失败 ce_id=%s", trigger_ce_id)
+
         return ce_id
+
+    def _update_target_ce_status(
+        self,
+        trigger_ce_id: int,
+        outcome: str,
+        weighted_summary: Dict[str, float],
+        is_synthesis: bool = False,
+        deliberation_mode: str = "refutation",
+    ) -> None:
+        """博弈结束后根据 outcome 更新被挑战 CE 的 status 和 confidence。
+
+        规则（推翻式，``deliberation_mode='refutation'``）：
+        - consensus（推翻成功）→ status='refuted', confidence 降至 0.2
+        - majority → status='contested', confidence 降 30%
+        - dissent（未果）→ status='contested'（confidence 不变）
+
+        规则（确认式，``deliberation_mode='confirmation'``）：
+        - consensus（确认成功）→ status='confirmed', confidence 提升 30%（上限 0.95）
+        - majority（多数认可）→ status='supported', confidence 提升 15%（上限 0.9）
+        - dissent（确认失败）→ 不改变状态/置信度
+
+        综合博弈（synthesis mode）不修改目标 CE 状态（它是整合而非推翻）。
+        """
+        if is_synthesis:
+            return  # 综合博弈不改变源 CE 状态
+
+        target_ce = cognitive.get_element(trigger_ce_id)
+        if not target_ce:
+            return
+
+        current_conf = target_ce.get("confidence") or 0.5
+        current_status = target_ce.get("status") or "open"
+
+        # 已经是 confirmed 的不允许被降级（需要走正式再审流程）
+        if current_status == "confirmed" and deliberation_mode == "refutation":
+            return
+
+        updates: Dict[str, Any] = {}
+        if deliberation_mode == "confirmation":
+            # 确认式博弈：共识 → 提升状态与置信度
+            if outcome == "consensus":
+                updates["status"] = "confirmed"
+                updates["confidence"] = min(0.95, current_conf * 1.3)
+            elif outcome == "majority":
+                # 不覆盖 confirmed；其他状态可提到 supported
+                if current_status != "confirmed":
+                    updates["status"] = "supported"
+                updates["confidence"] = min(0.9, current_conf * 1.15)
+            else:  # dissent —— 确认失败，保持现状
+                pass
+        else:
+            # 推翻式博弈：保持原逻辑不变
+            if outcome == "consensus":
+                updates["status"] = "refuted"
+                updates["confidence"] = 0.2
+            elif outcome == "majority":
+                updates["status"] = "contested"
+                updates["confidence"] = max(0.1, current_conf * 0.7)  # 降 30%
+            elif outcome == "dissent":
+                updates["status"] = "contested"
+                # confidence 不变
+
+        if updates:
+            cognitive.update_element(trigger_ce_id, updates)
+            logger.info(
+                "[CE-lifecycle] CE#%d 博弈后状态更新[%s]: %s → %s (confidence: %.2f → %.2f)",
+                trigger_ce_id, deliberation_mode, current_status,
+                updates.get("status", current_status),
+                current_conf, updates.get("confidence", current_conf),
+            )
 
     # ============================================================
     # 一键执行
@@ -698,10 +796,10 @@ class DeliberationEngine:
         """判断本轮是否压倒性一致（同一 stance 占比 ≥ 90%）。"""
         if not round_turns:
             return False
-        decisive = [t for t in round_turns if t.get("stance") in {"support", "propose", "oppose"}]
+        decisive = [t for t in round_turns if t.get("stance") in {"support", "propose", "confirm", "oppose"}]
         if len(decisive) < max(2, len(round_turns) - 1):
             return False
-        same_support = sum(1 for t in decisive if t["stance"] in {"support", "propose"})
+        same_support = sum(1 for t in decisive if t["stance"] in {"support", "propose", "confirm"})
         same_oppose = sum(1 for t in decisive if t["stance"] == "oppose")
         n = len(decisive)
         return (same_support / n >= 0.9) or (same_oppose / n >= 0.9)
@@ -718,18 +816,23 @@ class DeliberationEngine:
     ) -> Optional[int]:
         """根据 outcome 生成对应 CE 并与触发 CE 建立关系。
 
-        支持两种模式：
+        支持三种模式：
 
         - **推翻式博弈**（默认）：consensus → ``consensus`` CE / supports；
           majority → ``perspective`` / relates_to；dissent → ``dissent`` /
           contradicts。
-        - **建设性综合博弈**（topic 前缀含「综合」「统一结论」）：
+        - **建设性综合博弈**（topic 含「综合」「统一结论」）：
           consensus → ``conclusion`` / derives_from（更高置信度）；
           majority → ``inference`` / derives_from；
           dissent → ``dissent`` / related_to。
           综合成功时还会与 topic 中所有源 CE 建立 ``derives_from`` 关系。
+        - **建设性确认博弈**（topic 含「是否确认其为已建立的理论」）：
+          consensus → ``consensus`` / supports（明确肯定）；
+          majority → ``perspective`` / supports；
+          dissent → 不产出新 CE、仅记录。
         """
         is_synthesis = self._is_synthesis_mode(topic)
+        is_confirmation = self._is_confirmation_mode(topic)
 
         if is_synthesis:
             if outcome == "consensus":
@@ -748,6 +851,23 @@ class DeliberationEngine:
                 ce_type = "dissent"
                 relation = "relates_to"
                 confidence = 0.5
+        elif is_confirmation:
+            # 建设性确认：共识/多数 → 肯定型 CE、supports 关系
+            if outcome == "consensus":
+                ce_type = "consensus"
+                relation = "supports"
+                # 确认成功给较高置信度
+                confidence = min(0.95, float(weighted_summary.get("agree_ratio", 0.85)))
+            elif outcome == "majority":
+                ce_type = "perspective"
+                relation = "supports"
+                confidence = float(weighted_summary.get("agree_ratio", 0.65))
+            else:  # dissent —— 确认失败，不产出新 CE、也不建 contradicts 关系
+                logger.info(
+                    "[confirmation-delib] dissent：不产出新 CE trigger_ce=%s topic=%r",
+                    trigger_ce_id, topic[:60],
+                )
+                return None
         else:
             if outcome == "consensus":
                 ce_type = "consensus"
@@ -770,10 +890,11 @@ class DeliberationEngine:
             "关键论点：",
         ]
         for k in key_args:
-            body_lines.append(
-                f"- [round={k['round_index']} {k['role_key']}/{k['stance']}] "
-                f"{(k.get('speech') or '')[:120]}"
-            )
+            stance = k['stance']
+            role = k['role_key']
+            speech_clean = self._clean_speech(k.get('speech') or '')
+            if speech_clean:
+                body_lines.append(f"- {role}（{stance}）：{speech_clean[:150]}")
         content = "\n".join(body_lines)
 
         if is_synthesis:
@@ -782,6 +903,32 @@ class DeliberationEngine:
                 "majority":  f"[综合推论] {topic[:30]}",
                 "dissent":   f"[综合失败] {topic[:30]}",
             }[outcome]
+        elif is_confirmation:
+            # 提取原始结论摘要（topic 中"结论："后的部分）
+            target_summary = topic
+            try:
+                if "结论：" in topic:
+                    target_summary = topic.split("结论：", 1)[1].split("\n", 1)[0]
+            except Exception:
+                pass
+            title = {
+                "consensus": f"[确认共识] {target_summary[:30]}",
+                "majority":  f"[多数认可] {target_summary[:30]}",
+                "dissent":   f"[确认失败] {target_summary[:30]}",
+            }[outcome]
+            # 重写正文，让语义充分肯定、可供下游阅读
+            if outcome == "consensus":
+                body_lines.insert(
+                    0,
+                    f"经过博弈确认：{target_summary[:120]} 已被多数 Agent 认可为已建立的理论。",
+                )
+                content = "\n".join(body_lines)
+            elif outcome == "majority":
+                body_lines.insert(
+                    0,
+                    f"多数认可：{target_summary[:120]} 获多数支持，但仍需更多证据巩固。",
+                )
+                content = "\n".join(body_lines)
         else:
             title = {
                 "consensus": f"[共识] {topic[:30]}",
@@ -799,7 +946,10 @@ class DeliberationEngine:
                 source_agent_id=None,
                 metadata_json={
                     "deliberation_outcome": outcome,
-                    "deliberation_mode": "synthesis" if is_synthesis else "refutation",
+                    "deliberation_mode": (
+                        "synthesis" if is_synthesis
+                        else ("confirmation" if is_confirmation else "refutation")
+                    ),
                     "vote_summary": weighted_summary,
                     "key_arguments": key_args,
                     "topic": topic,
@@ -864,6 +1014,56 @@ class DeliberationEngine:
         return ("综合" in topic) and ("统一结论" in topic)
 
     @staticmethod
+    def _is_confirmation_mode(topic: str) -> bool:
+        """通过 topic 标识识别建设性确认博弈。
+
+        与 :meth:`orchestrator.ATAOrchestrator._scan_and_trigger_confirmation_deliberation`
+        生成的议题保持一致：含 ``_CONFIRMATION_TOPIC_MARKER``。
+        """
+        if not topic:
+            return False
+        return _CONFIRMATION_TOPIC_MARKER in topic
+
+    @classmethod
+    def _detect_mode(cls, topic: str) -> str:
+        """从 topic 推导博弈模式：synthesis / confirmation / refutation。"""
+        if cls._is_synthesis_mode(topic):
+            return "synthesis"
+        if cls._is_confirmation_mode(topic):
+            return "confirmation"
+        return "refutation"
+
+    @staticmethod
+    def _clean_speech(raw_speech: str) -> str:
+        """从 agent speech 中剥离 JSON 代码块，只保留可读论述。"""
+        if not raw_speech:
+            return ""
+        import re
+        # 移除 ```json ... ``` 代码块
+        cleaned = re.sub(r'```json\s*\{[^}]*(?:\{[^}]*\}[^}]*)*\}?\s*```', '', raw_speech, flags=re.DOTALL)
+        # 也处理没有闭合的 ```json 块
+        cleaned = re.sub(r'```json\s*.*?```', '', cleaned, flags=re.DOTALL)
+        # 移除独立的 ```
+        cleaned = re.sub(r'```\w*\s*', '', cleaned)
+        # 清理多余空行
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+        # 如果清理后为空（整个 speech 就是 JSON），尝试提取 JSON 中的 thoughts 字段
+        if not cleaned:
+            try:
+                import json as _json
+                json_match = re.search(r'\{[\s\S]*\}', raw_speech)
+                if json_match:
+                    data = _json.loads(json_match.group())
+                    # 优先取 conclusion > reason > thoughts
+                    cleaned = data.get('conclusion') or data.get('reason') or data.get('thoughts') or ''
+                    if isinstance(cleaned, str):
+                        cleaned = cleaned.strip()
+            except Exception:
+                # 降级：直接去掉 JSON 特殊字符
+                cleaned = re.sub(r'[{}"\\]', '', raw_speech).strip()
+        return cleaned
+
+    @staticmethod
     def _summarize_key_arguments(
         all_turns: List[Dict[str, Any]],
         limit: int = 5,
@@ -884,7 +1084,7 @@ class DeliberationEngine:
                 "round_index": t.get("round_index"),
                 "role_key": t.get("role_key"),
                 "stance": t.get("stance"),
-                "speech": (t.get("speech") or "")[:240],
+                "speech": DeliberationEngine._clean_speech((t.get("speech") or ""))[:240],
                 "agent_instance_id": t.get("agent_instance_id"),
                 "cited_ce_ids": t.get("cited_ce_ids") or [],
             })

@@ -21,6 +21,7 @@ from engines.base import ResearchEngine, SessionResult
 from agents.llm_client import call_llm, extract_json
 from tools.registry import dispatch, get_tool_names
 from config import RESEARCH_MODEL
+from orchestrator import _summarize_tool_result
 
 import cognitive  # 认知元素业务层（蓝图 §1.1 / §2.4）
 
@@ -295,17 +296,25 @@ class ThreeRoundEngine(ResearchEngine):
                 obs_metadata = {
                     'tool': tool_name,
                     'params': tool_params,
+                    'tool_result': tool_result,  # 完整原始结果保留供查阅
                     'result_excerpt': _truncate(tool_result, 1000),
                     'topic': ctx.topic,
                     'confidence_method': 'tool_execution',
                     'status': 'frozen',
                     'source_session_id': getattr(ctx, 'session_id', None),
                 }
+                try:
+                    obs_content = _summarize_tool_result(tool_name, tool_result)
+                except Exception:
+                    logger.exception("_summarize_tool_result 失败 tool=%s", tool_name)
+                    obs_content = f"工具 {tool_name} 调用产物：{_truncate(tool_result, 400)}"
+                if len(obs_content) > 2000:
+                    obs_content = obs_content[:2000] + '…(截断)'
                 ce = self._safe_create_element(
                     brain_id=brain_id,
                     ce_type='observation',
                     title=f"{tool_name}",
-                    content=f"工具 {tool_name} 调用产物：{_truncate(tool_result, 400)}",
+                    content=obs_content,
                     confidence=_CONF_OBSERVATION,
                     metadata=obs_metadata,
                 )

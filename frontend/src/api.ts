@@ -5,6 +5,7 @@ import type {
   CreateBrainResponse,
   KnowledgeGraph,
   ObserverLog,
+  ThinkingSummary,
   User,
 } from './types';
 
@@ -105,6 +106,8 @@ export const api = {
     request(`/brains/${brainId}/pause`, { method: 'POST' }) as Promise<{ status: string; brain: Brain }>,
   resumeBrain: (brainId: number) =>
     request(`/brains/${brainId}/resume`, { method: 'POST' }) as Promise<{ status: string; brain: Brain }>,
+  stopBrain: (brainId: number) =>
+    request(`/brains/${brainId}/stop`, { method: 'POST' }) as Promise<{ status: string; brain: Brain }>,
 
   // === Legacy projects (Phase 0~4) ===
   listProjects: () => request('/projects'),
@@ -196,6 +199,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data || {}),
     });
+  },
+
+  // 硅基大脑 · 思考总结（"想明白了什么"）
+  getThinkingSummary: async (brainId: number): Promise<ThinkingSummary | null> => {
+    const res = await request(`/brains/${brainId}/thinking-summary`) as any;
+    return res?.summary || null;
   },
 };
 
