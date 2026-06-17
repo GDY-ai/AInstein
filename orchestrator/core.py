@@ -32,6 +32,7 @@ import cognitive
 from .constants import (
     _CONVERGENCE_CE_TYPE,
     _CONVERGENCE_CONFIDENCE_THRESHOLD,
+    _CONVERGENCE_MIN_CE_COUNT,
     _CONVERGENCE_ROLE_KEY,
     _DEFAULT_SPAWN_ROLES,
     _FALLBACK_CE_COUNT,
@@ -640,6 +641,22 @@ class ATAOrchestrator(
                 return False
         except Exception:
             logger.exception("_check_convergence 读取主脑 id 失败 brain=%s", brain_id)
+
+        # 最小 CE 数量门槛：CE 总数不足 _CONVERGENCE_MIN_CE_COUNT 时禁止收敛
+        # （目标：避免大脑只产出几十个 CE 就草率收尾，强制深化思考）
+        try:
+            ce_count = _db.count_cognitive_elements(brain_id)
+            if ce_count < _CONVERGENCE_MIN_CE_COUNT:
+                logger.debug(
+                    "[convergence] brain=%s CE 总数=%d < %d，未达最小门槛，禁止收敛",
+                    brain_id, ce_count, _CONVERGENCE_MIN_CE_COUNT,
+                )
+                return False
+        except Exception:
+            logger.exception(
+                "_check_convergence 查询 CE 总数失败 brain=%s", brain_id,
+            )
+
         try:
             # 获取所有高置信度 conclusion（不限来源）
             rows = _db.get_high_confidence_ces(

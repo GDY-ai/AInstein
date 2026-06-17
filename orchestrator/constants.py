@@ -71,12 +71,20 @@ _DISPATCH_PER_CYCLE: int = 1
 #: brain_loop 循环内异常时的统一冷静期
 _LOOP_ERROR_COOLDOWN: float = 5.0
 #: 共识收敛阈值 —— synthesizer 产出的 conclusion 置信度 > 该值即自动停止
-#: （双轨终止策略·主轨：从 0.9 降到 0.75，使中等置信度的结论也能触发收敛）
-_CONVERGENCE_CONFIDENCE_THRESHOLD: float = 0.85
+#: （主轨阈值上调到 0.9，强制大脑形成更高置信度结论才允许终止，
+#:  解决「思考过早收敛、CE 数量不足」的问题）
+_CONVERGENCE_CONFIDENCE_THRESHOLD: float = 0.9
 #: 触发收敛的角色 key
 _CONVERGENCE_ROLE_KEY: str = "synthesizer"
 #: 触发收敛的 CE 类型
 _CONVERGENCE_CE_TYPE: str = "conclusion"
+#: 共识收敛最小 CE 门槛 —— 大脑 CE 总数低于该值时禁止触发收敛终止
+#: （目标：把大脑总思考量推到 100+，避免几十个 CE 就草率收尾）
+_CONVERGENCE_MIN_CE_COUNT: int = 50
+#: 首次允许派遣 synthesizer 的最小 CE 门槛
+#: （目标：前 30 个 CE 让 explorer / investigator / critic 充分发散，
+#:  避免 synthesizer 过早介入压缩思维空间）
+_SYNTHESIZER_MIN_CE_DISPATCH: int = 30
 #: 双轨终止策略·兜底轨：当 CE 总数达到此阈值时，强制派遣 synthesizer 总结
 _FALLBACK_CE_COUNT: int = 500
 #: 双轨终止策略·兜底轨：当大脑运行时长（秒）达到此阈值时，强制派遣 synthesizer 总结

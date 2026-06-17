@@ -50,6 +50,7 @@ from .constants import (
     _QUESTION_RESOLVE_PRIORITY_RATIO,
     _QUESTION_RESOLVE_PROBABILITY,
     _QUESTION_RESOLVE_ROLES,
+    _SYNTHESIZER_MIN_CE_DISPATCH,
 )
 
 logger = logging.getLogger(__name__)
@@ -282,6 +283,24 @@ class StrategyMixin:
         if not candidate_roles:
             # 未指定 → 默认让 investigator 兜底（解题优先）
             candidate_roles = {"investigator"}
+
+        # 前 _SYNTHESIZER_MIN_CE_DISPATCH 个 CE 期间禁止派遣 synthesizer
+        # （目标：让 explorer / investigator / critic 充分发散，避免过早综合压缩思维空间）
+        if "synthesizer" in candidate_roles:
+            try:
+                ce_count = _db.count_cognitive_elements(brain_id)
+                if ce_count < _SYNTHESIZER_MIN_CE_DISPATCH:
+                    candidate_roles = set(candidate_roles) - {"synthesizer"}
+                    if not candidate_roles:
+                        candidate_roles = {"investigator"}
+                    logger.debug(
+                        "[synth-gate] brain=%s CE=%d < %d，从候选角色排除 synthesizer",
+                        brain_id, ce_count, _SYNTHESIZER_MIN_CE_DISPATCH,
+                    )
+            except Exception:
+                logger.exception(
+                    "[synth-gate] CE 总数查询失败 brain=%s", brain_id,
+                )
 
         # 先在已有 Agent 池中找
         agents = self.agent_pool.get_agents(brain_id)
@@ -1328,7 +1347,26 @@ class StrategyMixin:
             return False
 
     def _pick_or_spawn(self, brain_id: int, role_name: str) -> Optional[BaseAgent]:
-        """从池子里找指定角色 Agent；找不到则 spawn 一个；都失败返回 None。"""
+        """从池子里找指定角色 Agent；找不到则 spawn 一个；都失败返回 None。
+
+        额外约束：当请求 ``synthesizer`` 但当前大脑 CE 数 <
+        :data:`_SYNTHESIZER_MIN_CE_DISPATCH` 时直接返回 None，
+        避免前期过早综合压缩思维空间。
+        """
+        if role_name == "synthesizer":
+            try:
+                ce_count = _db.count_cognitive_elements(brain_id)
+                if ce_count < _SYNTHESIZER_MIN_CE_DISPATCH:
+                    logger.debug(
+                        "[synth-gate] brain=%s CE=%d < %d，跳过 synthesizer 派遣",
+                        brain_id, ce_count, _SYNTHESIZER_MIN_CE_DISPATCH,
+                    )
+                    return None
+            except Exception:
+                logger.exception(
+                    "[synth-gate] _pick_or_spawn 查询 CE 总数失败 brain=%s",
+                    brain_id,
+                )
         try:
             agents = self.agent_pool.get_agents(brain_id, role_name=role_name)
             if agents:
