@@ -62,118 +62,72 @@ const STATE_COLORS: Record<string, string> = {
   gestating: '#f6c179',
 };
 
-// ===================== 大脑低多边形几何 =====================
+// ===================== 大脑写实形状（贝塞尔路径） =====================
 
-// 大脑侧面轮廓 + 内部顶点（归一化到 [-1, 1]）
-// 共 98 个顶点：40 外轮廓 + 24/18/12 三层内壳 + 4 核心
-const BRAIN_OUTER_COUNT = 40;
-const BRAIN_VERTICES_RAW: Array<[number, number]> = [
-  // ============ 外轮廓 40 点（顺时针，从前额下端开始） ============
-  // 前额前缘上升 (0..9)
-  [-0.92, -0.12], [-0.97, -0.24], [-0.99, -0.40], [-0.96, -0.54],
-  [-0.90, -0.66], [-0.82, -0.76], [-0.72, -0.82], [-0.60, -0.86],
-  [-0.46, -0.87], [-0.32, -0.85],
-  // 顶叶 / 大脑顶部 (10..14)
-  [-0.18, -0.83], [-0.04, -0.81], [ 0.10, -0.80], [ 0.24, -0.79],
-  [ 0.38, -0.77],
-  // 枕叶后缘 (15..20)
-  [ 0.50, -0.72], [ 0.62, -0.62], [ 0.74, -0.48], [ 0.84, -0.30],
-  [ 0.93, -0.10], [ 0.96,  0.08],
-  // 小脑外缘（独立小圆弧） (21..26)
-  [ 0.92,  0.24], [ 0.86,  0.38], [ 0.78,  0.50], [ 0.66,  0.58],
-  [ 0.54,  0.62], [ 0.42,  0.62],
-  // 脑干 (27..30)
-  [ 0.30,  0.68], [ 0.18,  0.76], [ 0.06,  0.78], [-0.06,  0.72],
-  // 颞叶下缘 (31..39) — 外侧裂上沿稍内凹
-  [-0.18,  0.62], [-0.30,  0.54], [-0.44,  0.48], [-0.56,  0.44],
-  [-0.68,  0.36], [-0.78,  0.26], [-0.86,  0.14], [-0.92,  0.02],
-  [-0.94, -0.04],
-
-  // ============ 内层 1（24 点，沿外轮廓向内 ~0.7 倍缩） 40..63 ============
-  [-0.66, -0.20], [-0.70, -0.42], [-0.66, -0.58], [-0.56, -0.68],
-  [-0.42, -0.72], [-0.26, -0.70], [-0.10, -0.68], [ 0.06, -0.66],
-  [ 0.22, -0.64], [ 0.36, -0.60], [ 0.50, -0.52], [ 0.62, -0.36],
-  [ 0.70, -0.16], [ 0.72,  0.04], [ 0.66,  0.22], [ 0.56,  0.36],
-  [ 0.42,  0.46], [ 0.26,  0.50], [ 0.10,  0.50], [-0.06,  0.46],
-  [-0.22,  0.40], [-0.38,  0.30], [-0.52,  0.18], [-0.62,  0.00],
-
-  // ============ 内层 2（18 点） 64..81 ============
-  [-0.42, -0.30], [-0.46, -0.50], [-0.36, -0.58], [-0.20, -0.56],
-  [-0.04, -0.54], [ 0.12, -0.52], [ 0.26, -0.46], [ 0.40, -0.36],
-  [ 0.48, -0.20], [ 0.50,  0.00], [ 0.42,  0.20], [ 0.30,  0.30],
-  [ 0.14,  0.32], [-0.02,  0.30], [-0.18,  0.24], [-0.32,  0.14],
-  [-0.40,  0.00], [-0.42, -0.16],
-
-  // ============ 内层 3（12 点） 82..93 ============
-  [-0.22, -0.34], [-0.10, -0.40], [ 0.06, -0.38], [ 0.20, -0.32],
-  [ 0.30, -0.18], [ 0.32,  0.00], [ 0.24,  0.16], [ 0.10,  0.20],
-  [-0.08,  0.14], [-0.20,  0.04], [-0.22, -0.16], [-0.04, -0.22],
-
-  // ============ 核心 4 点 94..97 ============
-  [-0.04, -0.10], [ 0.10, -0.06], [ 0.04,  0.04], [-0.10, -0.04],
+// 大脑侧面外轮廓控制点（归一化到 [-1, 1]，y 向下为正）
+// 顺时针：起点位于额叶前下方
+const BRAIN_OUTLINE: Array<[number, number]> = [
+  [-0.74,  0.18],   // 0  额叶前下
+  [-0.82, -0.06],   // 1  额叶前缘
+  [-0.84, -0.34],   // 2  额叶前缘上升
+  [-0.74, -0.60],   // 3  额叶前上
+  [-0.58, -0.78],   // 4  额叶顶（饱满圆润）
+  [-0.36, -0.86],   // 5  额顶交界
+  [-0.10, -0.88],   // 6  顶叶顶（最高点）
+  [ 0.18, -0.84],   // 7  顶叶
+  [ 0.42, -0.74],   // 8  顶枕交界
+  [ 0.60, -0.56],   // 9  枕叶上
+  [ 0.74, -0.30],   // 10 枕叶后
+  [ 0.78, -0.05],   // 11 枕叶下后
+  [ 0.72,  0.13],   // 12 枕叶底
+  [ 0.58,  0.20],   // 13 小脑分界凹陷
+  [ 0.70,  0.34],   // 14 小脑外缘
+  [ 0.66,  0.50],   // 15 小脑下
+  [ 0.48,  0.56],   // 16 小脑左下
+  [ 0.30,  0.50],   // 17 小脑根（凹）
+  [ 0.20,  0.62],   // 18 脑干右
+  [ 0.02,  0.66],   // 19 脑干底
+  [-0.18,  0.58],   // 20 脑干左
+  [-0.34,  0.48],   // 21 颞叶下
+  [-0.54,  0.44],   // 22 颞叶
+  [-0.70,  0.36],   // 23 颞叶前下
+  [-0.78,  0.28],   // 24 颞叶前
 ];
 
-// 大脑表面"脑沟"弧线（归一化坐标），用平滑曲线模拟主要沟回
-// 每条由若干路径点组成，将以 quadratic 平滑成弧
-const BRAIN_SULCI: Array<Array<[number, number]>> = [
-  // 中央沟（Rolando 沟）：从大脑顶部偏前向下到外侧裂方向
-  [[-0.06, -0.82], [-0.12, -0.62], [-0.18, -0.40], [-0.24, -0.18], [-0.28,  0.00]],
-  // 外侧裂（Sylvian 沟）：颞叶上沿向后（区分额/顶 与 颞叶）
-  [[-0.78,  0.06], [-0.55, -0.04], [-0.30, -0.10], [-0.05, -0.12], [ 0.20, -0.14], [ 0.42, -0.18]],
-  // 顶枕沟：分离顶叶与枕叶
-  [[ 0.40, -0.76], [ 0.46, -0.54], [ 0.55, -0.30], [ 0.66, -0.06]],
+// 脑沟曲线：每条由 [起点, 控制点1, 控制点2, 终点] 组成（归一化坐标）
+const BRAIN_SULCI: Array<[
+  [number, number], [number, number], [number, number], [number, number]
+]> = [
+  // 中央沟（Rolando）：从顶部偏前向下弯曲
+  [[-0.05, -0.82], [-0.10, -0.50], [-0.16, -0.20], [-0.18,  0.05]],
+  // 外侧裂（Sylvian）：水平大沟分隔颞叶
+  [[-0.62,  0.02], [-0.32, -0.12], [ 0.02, -0.06], [ 0.32,  0.06]],
+  // 额前沟
+  [[-0.58, -0.50], [-0.55, -0.34], [-0.50, -0.18], [-0.44, -0.04]],
+  // 额上沟
+  [[-0.34, -0.74], [-0.32, -0.55], [-0.28, -0.36], [-0.24, -0.18]],
+  // 顶枕沟
+  [[ 0.22, -0.72], [ 0.28, -0.50], [ 0.34, -0.28], [ 0.38, -0.06]],
+  // 颞上沟
+  [[-0.44,  0.16], [-0.20,  0.10], [ 0.04,  0.18], [ 0.26,  0.22]],
+  // 颞下沟
+  [[-0.32,  0.30], [-0.12,  0.28], [ 0.06,  0.32], [ 0.20,  0.34]],
+  // 扣带沟（弧形横贯顶部内侧）
+  [[-0.42, -0.40], [-0.18, -0.52], [ 0.14, -0.50], [ 0.34, -0.42]],
+  // 枕侧小沟
+  [[ 0.50, -0.48], [ 0.56, -0.32], [ 0.60, -0.16], [ 0.62,  0.00]],
+  // 额下沟
+  [[-0.66, -0.18], [-0.56, -0.06], [-0.46,  0.04], [-0.36,  0.10]],
 ];
 
-// 自动生成网格边：闭合外轮廓 + 限距 kNN（避免跨区连线）
-function buildBrainEdges(): Array<[number, number]> {
-  const k = 5;
-  const maxDist = 0.45;
-  const set = new Set<string>();
-  const add = (a: number, b: number) => {
-    const key = a < b ? `${a}-${b}` : `${b}-${a}`;
-    set.add(key);
-  };
-  // 1) 外轮廓闭合
-  for (let i = 0; i < BRAIN_OUTER_COUNT; i++) {
-    add(i, (i + 1) % BRAIN_OUTER_COUNT);
-  }
-  // 2) 限距 kNN：只与近邻相连，防止杂乱长边
-  for (let i = 0; i < BRAIN_VERTICES_RAW.length; i++) {
-    const dists: Array<[number, number]> = [];
-    for (let j = 0; j < BRAIN_VERTICES_RAW.length; j++) {
-      if (i === j) continue;
-      const dx = BRAIN_VERTICES_RAW[i][0] - BRAIN_VERTICES_RAW[j][0];
-      const dy = BRAIN_VERTICES_RAW[i][1] - BRAIN_VERTICES_RAW[j][1];
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d < maxDist) dists.push([j, d]);
-    }
-    dists.sort((a, b) => a[1] - b[1]);
-    for (let n = 0; n < k && n < dists.length; n++) {
-      add(i, dists[n][0]);
-    }
-  }
-  return Array.from(set).map(s => {
-    const [a, b] = s.split('-').map(Number);
-    return [a, b] as [number, number];
-  });
-}
-
-const BRAIN_EDGES = buildBrainEdges();
-
-// 预计算各顶点距质心的归一化距离（用于深度调光）
-const BRAIN_DEPTH = (() => {
-  let sx = 0, sy = 0;
-  for (const v of BRAIN_VERTICES_RAW) { sx += v[0]; sy += v[1]; }
-  const cx = sx / BRAIN_VERTICES_RAW.length;
-  const cy = sy / BRAIN_VERTICES_RAW.length;
-  const arr = BRAIN_VERTICES_RAW.map(v => {
-    const dx = v[0] - cx;
-    const dy = v[1] - cy;
-    return Math.sqrt(dx * dx + dy * dy);
-  });
-  const m = Math.max(...arr);
-  return arr.map(d => d / m); // 0=中心, 1=最外缘
-})();
+// 小脑横纹（独立的密集弧线，模拟小脑叶片）
+const CEREBELLUM_LINES: Array<[
+  [number, number], [number, number], [number, number], [number, number]
+]> = [
+  [[ 0.34,  0.26], [ 0.46,  0.24], [ 0.58,  0.28], [ 0.66,  0.34]],
+  [[ 0.32,  0.36], [ 0.46,  0.34], [ 0.58,  0.38], [ 0.64,  0.44]],
+  [[ 0.34,  0.46], [ 0.46,  0.44], [ 0.56,  0.46], [ 0.60,  0.50]],
+];
 
 // ===================== 径向力布局 =====================
 
@@ -275,7 +229,7 @@ export default function BigScreen() {
     for (const brain of sorted) {
       const isMaster = brain.brain_type === 'master';
       const radius = isMaster
-        ? Math.min(150, Math.max(110, Math.min(width, height) * 0.13))
+        ? Math.min(220, Math.max(150, Math.min(width, height) * 0.18))
         : 28 + Math.min((brain.think_count || 0) * 0.18, 7);
       const color = isMaster ? '#cfe4ff' : SPHERE_COLORS[branchSlot % SPHERE_COLORS.length];
 
@@ -443,10 +397,10 @@ export default function BigScreen() {
       // 神经纤维
       drawFibers(ctx, edgesRef.current, t);
 
-      // 主脑（线框）
+      // 主脑（写实贝塞尔大脑）
       const masterNode = nodesRef.current.find(n => n.isMaster);
       if (masterNode) {
-        drawWireBrain(ctx, masterNode.x, masterNode.y, masterNode.radius, t);
+        drawBrain(ctx, masterNode.x, masterNode.y, masterNode.radius, t);
       }
 
       // 分支球体
@@ -581,7 +535,7 @@ export default function BigScreen() {
       generateBgStars(canvas.width, canvas.height);
       const master = nodesRef.current.find(n => n.isMaster);
       if (master) {
-        master.radius = Math.min(150, Math.max(110, Math.min(canvas.width, canvas.height) * 0.13));
+        master.radius = Math.min(220, Math.max(150, Math.min(canvas.width, canvas.height) * 0.18));
       }
     };
     window.addEventListener('resize', handleResize);
@@ -707,81 +661,184 @@ export default function BigScreen() {
   );
 }
 
-// ===================== 绘制：低多边形大脑 =====================
+// ===================== 绘制：写实大脑（贝塞尔曲线） =====================
 
-function drawWireBrain(
+function drawBrain(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
-  radius: number,
+  size: number,
   t: number,
 ) {
-  // 呼吸缩放 0.97 ~ 1.03
-  const breath = 1 + Math.sin(t * 0.022) * 0.03;
-  const scale = radius * breath;
-
-  // 内部体积感渐变
-  const innerR = scale * 0.95;
-  const volumeGrad = ctx.createRadialGradient(cx - innerR * 0.2, cy - innerR * 0.25, 0, cx, cy, innerR);
-  volumeGrad.addColorStop(0, 'rgba(255, 255, 255, 0.08)');
-  volumeGrad.addColorStop(0.4, 'rgba(180, 210, 240, 0.04)');
-  volumeGrad.addColorStop(1, 'rgba(80, 110, 160, 0)');
+  // 微弱呼吸脉动
+  const breathe = 1 + Math.sin(t * 0.020) * 0.018;
+  const s = size * breathe;
 
   ctx.save();
-  ctx.beginPath();
-  for (let i = 0; i < 31; i++) {
-    const v = BRAIN_VERTICES_RAW[i];
-    const px = cx + v[0] * scale;
-    const py = cy + v[1] * scale;
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  }
-  ctx.closePath();
-  ctx.fillStyle = volumeGrad;
-  ctx.fill();
-  ctx.restore();
+  ctx.translate(cx, cy);
 
-  // mesh 边
-  ctx.save();
-  ctx.shadowBlur = 8;
-  ctx.shadowColor = 'rgba(180, 220, 255, 0.55)';
-  ctx.strokeStyle = 'rgba(200, 230, 255, 0.55)';
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  for (const [a, b] of BRAIN_EDGES) {
-    const va = BRAIN_VERTICES_RAW[a];
-    const vb = BRAIN_VERTICES_RAW[b];
-    ctx.moveTo(cx + va[0] * scale, cy + va[1] * scale);
-    ctx.lineTo(cx + vb[0] * scale, cy + vb[1] * scale);
-  }
-  ctx.stroke();
-  ctx.restore();
-
-  // 顶点高光
-  ctx.save();
-  ctx.shadowBlur = 6;
-  ctx.shadowColor = 'rgba(200, 230, 255, 0.7)';
-  ctx.fillStyle = 'rgba(230, 245, 255, 0.85)';
-  for (let i = 0; i < BRAIN_VERTICES_RAW.length; i++) {
-    const v = BRAIN_VERTICES_RAW[i];
-    const px = cx + v[0] * scale;
-    const py = cy + v[1] * scale;
-    ctx.beginPath();
-    ctx.arc(px, py, 0.9, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-
-  // 外圈柔光晕
-  const auraR = scale * 1.4;
-  const aura = ctx.createRadialGradient(cx, cy, scale * 0.85, cx, cy, auraR);
+  // ---- 外圈柔光晕（强化体积感）----
+  const auraR = s * 1.55;
+  const aura = ctx.createRadialGradient(0, 0, s * 0.85, 0, 0, auraR);
   aura.addColorStop(0, 'rgba(150, 200, 255, 0.18)');
-  aura.addColorStop(0.5, 'rgba(120, 170, 230, 0.06)');
+  aura.addColorStop(0.5, 'rgba(120, 170, 230, 0.07)');
   aura.addColorStop(1, 'rgba(0, 0, 0, 0)');
   ctx.fillStyle = aura;
   ctx.beginPath();
-  ctx.arc(cx, cy, auraR, 0, Math.PI * 2);
+  ctx.arc(0, 0, auraR, 0, Math.PI * 2);
   ctx.fill();
+
+  // ---- 用 Catmull-Rom → 三次贝塞尔 平滑闭合大脑轮廓 ----
+  const buildOutlinePath = () => {
+    const pts = BRAIN_OUTLINE;
+    const n = pts.length;
+    const tension = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0] * s, pts[0][1] * s);
+    for (let i = 0; i < n; i++) {
+      const pPrev = pts[(i - 1 + n) % n];
+      const pCur  = pts[i];
+      const pNext = pts[(i + 1) % n];
+      const pNxt2 = pts[(i + 2) % n];
+      const cp1x = (pCur[0]  + (pNext[0] - pPrev[0]) * tension / 3) * s;
+      const cp1y = (pCur[1]  + (pNext[1] - pPrev[1]) * tension / 3) * s;
+      const cp2x = (pNext[0] - (pNxt2[0] - pCur[0])  * tension / 3) * s;
+      const cp2y = (pNext[1] - (pNxt2[1] - pCur[1])  * tension / 3) * s;
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, pNext[0] * s, pNext[1] * s);
+    }
+    ctx.closePath();
+  };
+
+  // ---- 主体填充：径向渐变模拟 3D 半透明体积 ----
+  buildOutlinePath();
+  const body = ctx.createRadialGradient(
+    -s * 0.18, -s * 0.22, 0,
+    0, 0, s * 0.95,
+  );
+  body.addColorStop(0,    'rgba(210, 232, 255, 0.30)');
+  body.addColorStop(0.45, 'rgba(150, 182, 226, 0.18)');
+  body.addColorStop(0.80, 'rgba(90, 120, 170, 0.10)');
+  body.addColorStop(1,    'rgba(40, 60, 100, 0.04)');
+  ctx.fillStyle = body;
+  ctx.fill();
+
+  // ---- 轮廓发光描边 ----
+  buildOutlinePath();
+  ctx.shadowBlur = 14;
+  ctx.shadowColor = 'rgba(150, 200, 255, 0.5)';
+  ctx.strokeStyle = 'rgba(190, 222, 255, 0.6)';
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // ---- 内部沟回纹理（裁剪到大脑轮廓内）----
+  ctx.save();
+  buildOutlinePath();
+  ctx.clip();
+
+  // 内部柔光（中心更亮，强化球体感）
+  const inner = ctx.createRadialGradient(-s * 0.12, -s * 0.18, 0, 0, 0, s * 0.85);
+  inner.addColorStop(0,   'rgba(220, 235, 255, 0.10)');
+  inner.addColorStop(0.6, 'rgba(160, 190, 230, 0.04)');
+  inner.addColorStop(1,   'rgba(80, 110, 160, 0)');
+  ctx.fillStyle = inner;
+  ctx.fillRect(-s * 1.2, -s * 1.2, s * 2.4, s * 2.4);
+
+  // 脑沟暗影（先画暗一档，制造凹陷感）
+  ctx.strokeStyle = 'rgba(40, 70, 120, 0.32)';
+  ctx.lineWidth = Math.max(0.6, s * 0.005);
+  for (const sul of BRAIN_SULCI) {
+    ctx.beginPath();
+    ctx.moveTo(sul[0][0] * s + s * 0.006, sul[0][1] * s + s * 0.010);
+    ctx.bezierCurveTo(
+      sul[1][0] * s + s * 0.006, sul[1][1] * s + s * 0.010,
+      sul[2][0] * s + s * 0.006, sul[2][1] * s + s * 0.010,
+      sul[3][0] * s + s * 0.006, sul[3][1] * s + s * 0.010,
+    );
+    ctx.stroke();
+  }
+
+  // 脑沟主线（亮色，弧形发光）
+  ctx.strokeStyle = 'rgba(150, 188, 230, 0.42)';
+  ctx.lineWidth = Math.max(0.9, s * 0.007);
+  ctx.shadowBlur = 4;
+  ctx.shadowColor = 'rgba(120, 170, 220, 0.35)';
+  for (const sul of BRAIN_SULCI) {
+    ctx.beginPath();
+    ctx.moveTo(sul[0][0] * s, sul[0][1] * s);
+    ctx.bezierCurveTo(
+      sul[1][0] * s, sul[1][1] * s,
+      sul[2][0] * s, sul[2][1] * s,
+      sul[3][0] * s, sul[3][1] * s,
+    );
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+
+  // 小脑分界线（半月弧，把小脑从主脑分出）
+  ctx.strokeStyle = 'rgba(130, 170, 220, 0.55)';
+  ctx.lineWidth = Math.max(1.0, s * 0.008);
+  ctx.beginPath();
+  ctx.moveTo(0.58 * s, 0.20 * s);
+  ctx.bezierCurveTo(
+    0.42 * s, 0.30 * s,
+    0.32 * s, 0.42 * s,
+    0.30 * s, 0.50 * s,
+  );
+  ctx.stroke();
+
+  // 小脑横纹
+  ctx.strokeStyle = 'rgba(140, 178, 222, 0.36)';
+  ctx.lineWidth = Math.max(0.7, s * 0.005);
+  for (const c of CEREBELLUM_LINES) {
+    ctx.beginPath();
+    ctx.moveTo(c[0][0] * s, c[0][1] * s);
+    ctx.bezierCurveTo(
+      c[1][0] * s, c[1][1] * s,
+      c[2][0] * s, c[2][1] * s,
+      c[3][0] * s, c[3][1] * s,
+    );
+    ctx.stroke();
+  }
+
+  // 脑干竖纹
+  ctx.strokeStyle = 'rgba(140, 175, 220, 0.32)';
+  ctx.lineWidth = Math.max(0.6, s * 0.004);
+  ctx.beginPath();
+  ctx.moveTo(-0.05 * s, 0.42 * s);
+  ctx.lineTo(-0.02 * s, 0.62 * s);
+  ctx.moveTo( 0.06 * s, 0.42 * s);
+  ctx.lineTo( 0.10 * s, 0.62 * s);
+  ctx.stroke();
+
+  ctx.restore();
+
+  // ---- 顶部高光弧（玻璃质感）----
+  ctx.save();
+  buildOutlinePath();
+  ctx.clip();
+  const hi = ctx.createRadialGradient(
+    -s * 0.28, -s * 0.48, 0,
+    -s * 0.28, -s * 0.48, s * 0.78,
+  );
+  hi.addColorStop(0,   'rgba(255, 255, 255, 0.20)');
+  hi.addColorStop(0.5, 'rgba(255, 255, 255, 0.05)');
+  hi.addColorStop(1,   'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = hi;
+  ctx.fillRect(-s * 1.2, -s * 1.2, s * 2.4, s * 2.4);
+  ctx.restore();
+
+  // ---- 中心微辉（脉动呼吸）----
+  const pulseAlpha = 0.05 + Math.sin(t * 0.024) * 0.03;
+  const core = ctx.createRadialGradient(0, 0, 0, 0, 0, s * 0.55);
+  core.addColorStop(0, `rgba(200, 230, 255, ${pulseAlpha})`);
+  core.addColorStop(1, 'rgba(200, 230, 255, 0)');
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, s * 0.55, s * 0.42, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
 }
 
 // ===================== 绘制：3D 抛光球体 =====================
