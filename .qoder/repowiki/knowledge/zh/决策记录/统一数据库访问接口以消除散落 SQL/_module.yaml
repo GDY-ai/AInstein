@@ -1,0 +1,7 @@
+schema_version: 1
+module_path: decisions/ea5470e75660_ca10c3407a54
+title: 统一数据库访问接口以消除散落 SQL
+scope: []
+source_files: []
+depends_on: []
+related_to: []

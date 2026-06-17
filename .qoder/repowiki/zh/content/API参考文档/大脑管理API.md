@@ -17,6 +17,7 @@
 - [tools/data_access.py](file://tools/data_access.py)
 - [tools/stats.py](file://tools/stats.py)
 - [tools/web_data.py](file://tools/web_data.py)
+- [paper_generator.py](file://paper_generator.py)
 - [frontend/src/pages/BrainView.tsx](file://frontend/src/pages/BrainView.tsx)
 - [frontend/src/types.ts](file://frontend/src/types.ts)
 - [frontend/src/api.ts](file://frontend/src/api.ts)
@@ -24,10 +25,10 @@
 
 ## 更新摘要
 **变更内容**
-- 新增知识图谱API的total_nodes和total_edges字段支持
-- 实现无限制加载功能，支持limit=None时返回所有数据
-- 增强前端统计显示，提供真实总量与已加载数量的对比
-- 优化数据库计数查询，提升大数据量场景下的性能
+- 新增研究论文生成API端点，包括任务提交、状态查询和文件下载功能
+- 实现异步论文生成任务管理系统，支持PDF和Markdown格式输出
+- 集成前端状态轮询机制，提供实时进度反馈
+- 添加任务状态持久化和多worker兼容性支持
 
 ## 目录
 1. [简介](#简介)
@@ -35,10 +36,11 @@
 3. [核心组件](#核心组件)
 4. [架构概览](#架构概览)
 5. [详细组件分析](#详细组件分析)
-6. [依赖分析](#依赖分析)
-7. [性能考虑](#性能考虑)
-8. [故障排除指南](#故障排除指南)
-9. [结论](#结论)
+6. [研究论文生成系统](#研究论文生成系统)
+7. [依赖分析](#依赖分析)
+8. [性能考虑](#性能考虑)
+9. [故障排除指南](#故障排除指南)
+10. [结论](#结论)
 
 ## 简介
 
@@ -56,58 +58,53 @@ subgraph "前端层"
 FE[React + Vite + TypeScript]
 API[前端API模块]
 BV[大脑视图页面]
-ENDPOINT[知识图谱端点]
-STATS[统计显示]
+PAPERBTN[论文生成按钮]
+STATUSUI[状态显示]
+DOWNLOADUI[下载界面]
 end
 subgraph "后端层"
 APP[Flask应用]
 AUTH[认证模块]
 ROUTES[路由控制器]
-KG[Knowledge Graph API]
-COUNT[计数查询]
+PAPERAPI[论文生成API]
+STATUSAPI[状态查询API]
+DOWNLOADAPI[文件下载API]
 end
 subgraph "业务逻辑层"
-AGENTS[Agent代理层]
-ENGINES[研究引擎]
-TOOLS[工具系统]
-COGNITIVE[认知业务]
+PAPERGEN[论文生成器]
+TASKMGR[任务管理系统]
+PROMPT[提示词构建]
+CONVERT[格式转换]
 end
 subgraph "基础设施层"
 DB[(SQLite数据库)]
-CONFIG[配置管理]
-EVENTBUS[事件总线]
-COUNTQ[计数查询优化]
+PAPERS[(论文存储目录)]
+TASKFILE[(任务状态文件)]
+THREAD[(后台线程)]
 end
 FE --> API
 API --> BV
-BV --> ENDPOINT
-ENDPOINT --> KG
-KG --> COUNT
-COUNT --> COUNTQ
+BV --> PAPERBTN
+PAPERBTN --> STATUSUI
+STATUSUI --> DOWNLOADUI
 APP --> AUTH
 APP --> ROUTES
-ROUTES --> AGENTS
-AGENTS --> ENGINES
-ENGINES --> TOOLS
-ENGINES --> COGNITIVE
-COGNITIVE --> DB
-AGENTS --> DB
-ENGINES --> DB
-TOOLS --> DB
-APP --> DB
-CONFIG --> APP
-EVENTBUS --> AGENTS
+ROUTES --> PAPERAPI
+PAPERAPI --> PAPERGEN
+PAPERGEN --> TASKMGR
+TASKMGR --> PAPERS
+TASKMGR --> TASKFILE
+PAPERAPI --> THREAD
+PAPERGEN --> PROMPT
+PAPERGEN --> CONVERT
+PAPERGEN --> DB
+CONVERT --> PAPERS
 ```
 
 **图表来源**
-- [app.py:1-1054](file://app.py#L1-L1054)
-- [database.py:1-877](file://database.py#L1-L877)
-- [config.py:1-11](file://config.py#L1-L11)
-- [frontend/src/pages/BrainView.tsx:144-165](file://frontend/src/pages/BrainView.tsx#L144-L165)
-- [frontend/src/types.ts:154-161](file://frontend/src/types.ts#L154-L161)
-
-**章节来源**
-- [README.md:186-212](file://README.md#L186-L212)
+- [app.py:1124-1174](file://app.py#L1124-L1174)
+- [paper_generator.py:247-376](file://paper_generator.py#L247-L376)
+- [frontend/src/pages/BrainView.tsx:86-144](file://frontend/src/pages/BrainView.tsx#L86-L144)
 
 ## 核心组件
 
@@ -160,13 +157,9 @@ D-->>U : 研究摘要
 - [agents/director.py:14-124](file://agents/director.py#L14-L124)
 - [agents/researcher.py:34-135](file://agents/researcher.py#L34-L135)
 
-**章节来源**
-- [cognitive.py:108-157](file://cognitive.py#L108-L157)
-- [engines/three_round.py:75-387](file://engines/three_round.py#L75-L387)
-
 ## 架构概览
 
-系统采用事件驱动的架构模式，支持去层级化的Agent协作：
+系统采用事件驱动的架构模式，支持去层级化的Agent协作和异步论文生成功能：
 
 ```mermaid
 graph LR
@@ -175,6 +168,7 @@ LOGIN[用户登录]
 CREATE[创建大脑]
 VIEW[查看结果]
 KGVIEW[知识图谱视图]
+PAPERBTN[生成论文按钮]
 end
 subgraph "认证授权"
 JWT[JWT Token]
@@ -187,18 +181,25 @@ CE[Cognitive Elements]
 REL[Cognitive Relations]
 DELIB[博弈引擎]
 KGAPI[知识图谱API]
-COUNTAPI[计数API]
+PAPERAPI[论文生成API]
+STATUSAPI[状态查询API]
+DOWNLOADAPI[文件下载API]
 end
 subgraph "数据存储层"
 SQLITE[SQLite]
 EVENTS[事件队列]
 SNAPSHOTS[快照]
-COUNTCACHE[计数缓存]
+PAPERS[论文文件夹]
+TASKS[任务状态文件]
+THREAD[后台线程]
 end
 LOGIN --> JWT
 CREATE --> BRAIN
 VIEW --> CE
 KGVIEW --> KGAPI
+PAPERBTN --> PAPERAPI
+PAPERAPI --> STATUSAPI
+STATUSAPI --> DOWNLOADAPI
 JWT --> AUTHZ
 AUTHZ --> BRAIN
 BRAIN --> CE
@@ -211,15 +212,17 @@ REL --> SQLITE
 DELIB --> SQLITE
 EVENTS --> SQLITE
 SNAPSHOTS --> SQLITE
-KGAPI --> COUNTAPI
-COUNTAPI --> COUNTCACHE
+PAPERAPI --> PAPERS
+STATUSAPI --> TASKS
+DOWNLOADAPI --> PAPERS
+PAPERAPI --> THREAD
 ```
 
 **图表来源**
-- [app.py:44-282](file://app.py#L44-L282)
+- [app.py:1124-1174](file://app.py#L1124-L1174)
+- [paper_generator.py:247-376](file://paper_generator.py#L247-L376)
 - [database.py:105-285](file://database.py#L105-L285)
 - [auth.py:122-151](file://auth.py#L122-L151)
-- [cognitive.py:327-406](file://cognitive.py#L327-L406)
 
 ## 详细组件分析
 
@@ -401,6 +404,102 @@ FE->>FE : 显示真实总量与已加载数量对比
 - [tools/stats.py:10-120](file://tools/stats.py#L10-L120)
 - [tools/web_data.py:13-164](file://tools/web_data.py#L13-L164)
 
+## 研究论文生成系统
+
+**新增** 系统现在支持自动生成研究论文，提供PDF和Markdown格式输出
+
+论文生成系统采用异步任务处理模式，支持长时间运行的任务和状态跟踪：
+
+```mermaid
+sequenceDiagram
+participant U as 用户
+participant FE as 前端
+participant API as 论文生成API
+participant BG as 后台线程
+participant PG as 论文生成器
+participant FS as 文件系统
+U->>FE : 点击生成论文按钮
+FE->>API : POST /brains/{brain_id}/paper
+API->>BG : 创建后台线程
+BG->>PG : generate_paper(brain_id, task_id)
+PG->>FS : 保存任务状态(.tasks.json)
+PG->>PG : 读取大脑数据
+PG->>PG : 构建mega prompt
+PG->>PG : 调用LLM生成Markdown
+PG->>PG : 转换为PDF
+PG->>FS : 保存PDF和Markdown文件
+PG->>FS : 更新任务状态为done
+FE->>API : 轮询状态 /paper-status/{task_id}
+API->>FS : 读取任务状态
+FS-->>API : 返回状态信息
+API-->>FE : {status, progress, download_url}
+FE->>U : 显示下载按钮
+U->>FE : 点击下载
+FE->>API : GET /paper/{filename}
+API->>FS : 提供文件下载
+FS-->>API : 返回文件内容
+API-->>FE : 下载响应
+```
+
+**图表来源**
+- [app.py:1124-1174](file://app.py#L1124-L1174)
+- [paper_generator.py:274-376](file://paper_generator.py#L274-L376)
+- [frontend/src/pages/BrainView.tsx:86-144](file://frontend/src/pages/BrainView.tsx#L86-L144)
+
+### API端点设计
+
+系统提供三个核心API端点：
+
+#### 1. 论文生成任务提交
+- **端点**: `POST /ainstein/api/brains/{brain_id}/paper`
+- **功能**: 提交新的论文生成任务
+- **响应**: 包含任务ID和初始状态
+- **状态码**: 202 Accepted
+
+#### 2. 任务状态查询
+- **端点**: `GET /ainstein/api/brains/{brain_id}/paper-status/{task_id}`
+- **功能**: 获取论文生成任务的当前状态
+- **响应**: 包含状态、进度信息和下载链接
+- **状态码**: 200 OK
+
+#### 3. 文件下载
+- **端点**: `GET /ainstein/api/brains/{brain_id}/paper/{filename}`
+- **功能**: 下载生成的PDF或Markdown文件
+- **响应**: 文件流或404错误
+- **状态码**: 200/404
+
+### 任务状态管理
+
+论文生成任务采用五种状态：
+
+```mermaid
+stateDiagram-v2
+[*] --> processing
+processing --> done : 生成成功
+processing --> error : 生成失败
+done --> [*]
+error --> [*]
+```
+
+状态流转说明：
+- **processing**: 任务已创建，正在处理中
+- **done**: 任务完成，可下载文件
+- **error**: 任务失败，包含错误信息
+
+### 文件格式支持
+
+系统支持两种输出格式：
+
+| 格式 | 文件扩展名 | 特点 | 下载链接 |
+|------|------------|------|----------|
+| PDF | `.pdf` | 专业格式，适合打印和分享 | `/ainstein/api/brains/{brain_id}/paper/{filename}` |
+| Markdown | `.md` | 源文本格式，可编辑 | `/ainstein/api/brains/{brain_id}/paper/{filename}` |
+
+**章节来源**
+- [app.py:1124-1174](file://app.py#L1124-L1174)
+- [paper_generator.py:274-376](file://paper_generator.py#L274-L376)
+- [frontend/src/pages/BrainView.tsx:86-144](file://frontend/src/pages/BrainView.tsx#L86-L144)
+
 ## 依赖分析
 
 系统采用模块化设计，各组件间依赖关系清晰：
@@ -413,6 +512,8 @@ SQLITE[SQLite数据库]
 PANDAS[pandas]
 NUMPY[numpy]
 SCIPY[scipy]
+MARKDOWN[markdown]
+WEASYPRINT[weasyprint]
 end
 subgraph "认证依赖"
 WERKZEUG[werkzeug]
@@ -428,6 +529,12 @@ REACT[React 18]
 VITE[Vite]
 TYPESCRIPT[TypeScript]
 D3[D3.js]
+end
+subgraph "论文生成依赖"
+THREADING[threading]
+JSON[json]
+OS[os.path]
+PATHLIB[pathlib]
 end
 app.py --> FLASK
 app.py --> SQLITE
@@ -446,11 +553,18 @@ frontend/* --> REACT
 frontend/* --> VITE
 frontend/* --> TYPESCRIPT
 frontend/* --> D3
+paper_generator.py --> MARKDOWN
+paper_generator.py --> WEASYPRINT
+paper_generator.py --> THREADING
+paper_generator.py --> JSON
+paper_generator.py --> OS
+paper_generator.py --> PATHLIB
 ```
 
 **图表来源**
 - [requirements.txt](file://requirements.txt)
 - [config.py:6-11](file://config.py#L6-L11)
+- [paper_generator.py:1-50](file://paper_generator.py#L1-L50)
 
 **章节来源**
 - [app.py:1-50](file://app.py#L1-L50)
@@ -471,6 +585,16 @@ frontend/* --> D3
 5. **计数查询优化**：新增专用计数函数，避免全表扫描
 6. **无限制加载支持**：通过LIMIT -1实现无限制数据加载
 
+### 论文生成性能优化
+
+**新增** 论文生成系统采用异步处理和状态持久化：
+
+1. **后台线程处理**：使用Python threading模块处理长时间运行的任务
+2. **任务状态持久化**：通过JSON文件存储任务状态，支持多worker场景
+3. **渐进式状态更新**：在生成过程中定期更新任务状态
+4. **文件系统缓存**：生成的PDF和Markdown文件缓存在本地存储
+5. **内存状态备份**：同时维护内存中的任务状态以提高查询速度
+
 ### 缓存策略
 
 ```mermaid
@@ -485,11 +609,15 @@ QUERY[查询结果缓存]
 SESSION[会话状态缓存]
 MODEL[模型响应缓存]
 COUNT[计数结果缓存]
+PAPERSTATE[论文状态缓存]
+TASKFILE[任务文件缓存]
 end
 QUERY --> REDIS
 SESSION --> MEMORY
 MODEL --> DISK
 COUNT --> MEMORY
+PAPERSTATE --> MEMORY
+TASKFILE --> MEMORY
 ```
 
 ### 并发处理
@@ -499,6 +627,7 @@ COUNT --> MEMORY
 1. **乐观锁**：使用版本号防止并发冲突
 2. **事务隔离**：确保数据操作的原子性
 3. **队列管理**：使用事件队列处理异步任务
+4. **线程安全**：论文生成器采用线程安全的状态管理
 
 ## 故障排除指南
 
@@ -513,6 +642,9 @@ COUNT --> MEMORY
 | 博弈异常 | 参与者不足 | 确认Agent实例状态和配额限制 |
 | 知识图谱加载缓慢 | 大数据量加载超时 | 使用limit参数进行分页加载 |
 | 计数查询失败 | total_nodes/total_edges为null | 检查数据库连接和权限 |
+| **论文生成失败** | 任务状态变为error | 检查LLM配置和磁盘空间 |
+| **状态查询超时** | /paper-status返回404 | 确认任务ID正确性和文件系统权限 |
+| **文件下载失败** | 404错误 | 检查文件是否存在和访问权限 |
 
 ### 调试工具
 
@@ -537,10 +669,11 @@ FILE --> ANALYTICS[日志分析]
 - [auth.py:158-184](file://auth.py#L158-L184)
 - [database.py:288-295](file://database.py#L288-L295)
 - [app.py:16-21](file://app.py#L16-L21)
+- [paper_generator.py:363-370](file://paper_generator.py#L363-L370)
 
 ## 结论
 
-AInstein项目展现了构建自主思考系统的完整思路和技术实现。通过认知元素抽象、去层级化Agent协作、事件驱动架构和博弈引擎等核心组件，系统实现了从种子问题到深度洞察的完整思维过程。
+AInstein项目展现了构建自主思考系统的完整思路和技术实现。通过认知元素抽象、去层级化Agent协作、事件驱动架构、博弈引擎和新增的论文生成功能等核心组件，系统实现了从种子问题到深度洞察再到学术论文的完整思维过程。
 
 项目的主要优势包括：
 
@@ -551,12 +684,18 @@ AInstein项目展现了构建自主思考系统的完整思路和技术实现。
 5. **可视化支持**：为后续的知识图谱可视化奠定基础
 6. **性能优化**：支持无限制加载和计数查询优化
 7. **实时统计**：提供真实总量与已加载数量的对比显示
+8. **异步论文生成**：支持长时间运行的任务处理和状态跟踪
+9. **多格式输出**：提供PDF和Markdown两种论文格式
+10. **任务持久化**：支持多worker场景和任务恢复
 
 **更新亮点**：
 - **知识图谱API增强**：新增total_nodes和total_edges字段，提供真实数据总量信息
 - **无限制加载支持**：当limit=None时，后端返回该大脑的所有CE和relations
 - **前端统计优化**：显示真实总量与已加载数量的对比，提升用户体验
 - **计数查询优化**：新增专用计数函数，提升大数据量场景下的性能表现
+- **论文生成系统**：新增异步论文生成功能，支持PDF和Markdown格式输出
+- **任务状态管理**：实现完整的任务生命周期管理和状态跟踪
+- **多worker兼容**：支持分布式部署和任务状态共享
 
 未来发展方向包括：
 
@@ -566,5 +705,7 @@ AInstein项目展现了构建自主思考系统的完整思路和技术实现。
 4. **可视化**：开发力导向图和上帝视角界面
 5. **用户系统**：实现封闭观察模式
 6. **性能监控**：添加详细的性能指标和监控告警
+7. **论文质量评估**：集成自动化的论文质量评分系统
+8. **多语言支持**：扩展支持更多语言的论文生成
 
 该项目为探索机器自主思考提供了宝贵的实践经验和理论基础，值得进一步深入研究和开发。

@@ -2,19 +2,19 @@
 schema_version: 1
 locale: zh-CN
 branch: master
-exported_at: "2026-06-13T06:31:26Z"
+exported_at: "2026-06-16T16:08:02Z"
 modules:
     "":
-        dir_name: 硅基大脑多智能体认知演化与可视化平台
-        title: 硅基大脑多智能体认知演化与可视化平台
+        dir_name: 硅基大脑认知演化平台
+        title: 硅基大脑认知演化平台
         scope: []
         source_files: []
         children: []
         depends_on: []
         related_to: []
     backend:
-        dir_name: 硅基大脑多智能体协作与认知演化平台
-        title: 硅基大脑多智能体协作与认知演化平台
+        dir_name: 硅基大脑多智能体协作平台
+        title: 硅基大脑多智能体协作平台
         scope:
             - agents/
             - engines/
@@ -25,14 +25,14 @@ modules:
             - wsgi.py
         source_files: []
         children:
-            - backend/agents
             - backend/tools
+            - backend/agents
         depends_on: []
         related_to:
             - path: frontend
     backend/agents:
-        dir_name: 多角色智能体框架与科研协作引擎
-        title: 多角色智能体框架与科研协作引擎
+        dir_name: 智能体框架与编排
+        title: 智能体框架与编排
         scope:
             - agents/
         source_files: []
@@ -50,9 +50,53 @@ modules:
         depends_on: []
         related_to:
             - path: backend/agents
+    decisions:
+        dir_name: 决策记录
+        title: 决策记录
+        scope: []
+        source_files: []
+        children:
+            - decisions/ea5470e75660_99f2b32a71d6
+            - decisions/ea5470e75660_ca10c3407a54
+            - decisions/6a45874b8bda_b54e8c616ad7
+            - decisions/6a45874b8bda_82d0e48f65a8
+        depends_on: []
+        related_to: []
+    decisions/6a45874b8bda_82d0e48f65a8:
+        dir_name: 将编排器拆分为模块化包结构
+        title: 将编排器拆分为模块化包结构
+        scope: []
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    decisions/6a45874b8bda_b54e8c616ad7:
+        dir_name: 统一数据库访问接口并消除业务层 SQL
+        title: 统一数据库访问接口并消除业务层 SQL
+        scope: []
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    decisions/ea5470e75660_99f2b32a71d6:
+        dir_name: 将编排器拆分为模块化子组件
+        title: 将编排器拆分为模块化子组件
+        scope: []
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    decisions/ea5470e75660_ca10c3407a54:
+        dir_name: 统一数据库访问接口以消除散落 SQL
+        title: 统一数据库访问接口以消除散落 SQL
+        scope: []
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
     frontend:
-        dir_name: 硅基大脑认知可视化与交互前端
-        title: 硅基大脑认知可视化与交互前端
+        dir_name: 硅基大脑前端控制台
+        title: 硅基大脑前端控制台
         scope:
             - frontend/
         source_files: []

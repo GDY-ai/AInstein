@@ -1,9 +1,0 @@
-schema_version: 1
-module_path: backend/agents
-title: 多角色智能体框架与科研协作引擎
-scope:
-    - agents/
-source_files: []
-depends_on: []
-related_to:
-    - path: backend/tools

@@ -18,6 +18,21 @@
 - [deliberation.py](file://deliberation.py)
 - [framework.py](file://agents/framework.py)
 - [README.md](file://README.md)
+- [brain_summary.py](file://brain_summary.py)
+- [orchestrator/__init__.py](file://orchestrator/__init__.py)
+- [orchestrator/core.py](file://orchestrator/core.py)
+- [orchestrator/master_coordinator.py](file://orchestrator/master_coordinator.py)
+- [orchestrator/deliberation_trigger.py](file://orchestrator/deliberation_trigger.py)
+- [orchestrator/strategy.py](file://orchestrator/strategy.py)
+- [orchestrator/tool_proposal.py](file://orchestrator/tool_proposal.py)
+- [orchestrator/constants.py](file://orchestrator/constants.py)
+- [frontend/src/pages/BigScreen.tsx](file://frontend/src/pages/BigScreen.tsx)
+- [frontend/src/pages/BrainView.tsx](file://frontend/src/pages/BrainView.tsx)
+- [frontend/src/pages/BrainList.tsx](file://frontend/src/pages/BrainList.tsx)
+- [frontend/src/pages/Dashboard.tsx](file://frontend/src/pages/Dashboard.tsx)
+- [frontend/src/pages/Login.tsx](file://frontend/src/pages/Login.tsx)
+- [frontend/src/pages/ProjectDetail.tsx](file://frontend/src/pages/ProjectDetail.tsx)
+- [frontend/src/components/ObserverPanel.tsx](file://frontend/src/components/ObserverPanel.tsx)
 </cite>
 
 ## 目录
@@ -33,15 +48,21 @@
 10. [附录](#附录)
 
 ## 简介
-本API参考文档面向开发者与集成方，系统化梳理AInstein平台的RESTful接口，覆盖项目管理、队列管理、会话管理、发现管理、数据集管理、科学家/主任/研究员调度接口，以及新增的**用户认证、大脑管理、博弈系统、观察员监控**等相关接口。新增的认证体系提供用户注册、登录与权限控制；大脑管理API支持大脑生命周期管理、认知元素与关系的CRUD操作、知识图谱检索和认知边界获取；博弈系统提供多智能体参与的决策引擎；观察员监控实现上帝视角的总结与报告生成功能。文档提供每个接口的HTTP方法、URL模式、请求参数、响应格式、状态码说明，并补充认证机制、安全考虑、版本管理与向后兼容策略、错误处理与调试建议，以及常见使用场景的请求/响应示例路径。
+本API参考文档面向开发者与集成方，系统化梳理AInstein平台的RESTful接口，覆盖项目管理、队列管理、会话管理、发现管理、数据集管理、科学家/主任/研究员调度接口，以及新增的**用户认证、大脑管理、博弈系统、观察员监控、模块化编排器架构、大脑摘要功能**等相关接口。新增的认证体系提供用户注册、登录与权限控制；大脑管理API支持大脑生命周期管理、认知元素与关系的CRUD操作、知识图谱检索和认知边界获取；博弈系统提供多智能体参与的决策引擎；观察员监控实现上帝视角的总结与报告生成功能；**新增的模块化编排器架构**通过事件驱动的方式管理大脑思考循环；**新增的大脑摘要功能**在大脑停止时自动生成思考总结。文档提供每个接口的HTTP方法、URL模式、请求参数、响应格式、状态码说明，并补充认证机制、安全考虑、版本管理与向后兼容策略、错误处理与调试建议，以及常见使用场景的请求/响应示例路径。
 
 ## 项目结构
-后端采用Flask应用，提供统一的前缀路径/ainstein/api，前端通过/ainstein/提供SPA静态资源。WSGI入口负责调度器初始化与锁控制，数据库层封装SQLite Schema与CRUD操作，Agent层负责业务编排，引擎层提供研究流程实现，工具层提供数据访问与统计工具。**新增的认证模块**通过auth.py提供密码哈希、JWT令牌签发与校验、Flask装饰器等认证能力；**新增的大脑管理模块**通过cognitive.py提供认知元素、关系和知识图谱的核心业务逻辑；**新增的博弈系统**通过deliberation.py实现多智能体决策引擎；**新增的观察员系统**通过observer.py提供上帝视角监控与报告生成。
+后端采用Flask应用，提供统一的前缀路径/ainstein/api，前端通过/ainstein/提供SPA静态资源。WSGI入口负责调度器初始化与锁控制，数据库层封装SQLite Schema与CRUD操作，Agent层负责业务编排，引擎层提供研究流程实现，工具层提供数据访问与统计工具。**新增的认证模块**通过auth.py提供密码哈希、JWT令牌签发与校验、Flask装饰器等认证能力；**新增的大脑管理模块**通过cognitive.py提供认知元素、关系和知识图谱的核心业务逻辑；**新增的博弈系统**通过deliberation.py实现多智能体决策引擎；**新增的观察员系统**通过observer.py提供上帝视角监控与报告生成；**新增的模块化编排器架构**通过orchestrator包提供事件驱动的大脑思考调度；**新增的大脑摘要功能**通过brain_summary.py提供思考结束时的自动总结生成功能。
 
 ```mermaid
 graph TB
 subgraph "前端"
 FE["React SPA<br/>/ainstein/*"]
+BigScreen["态势大屏<br/>BigScreen.tsx"]
+BrainView["大脑视图<br/>BrainView.tsx"]
+BrainList["大脑列表<br/>BrainList.tsx"]
+Dashboard["仪表板<br/>Dashboard.tsx"]
+Login["登录页面<br/>Login.tsx"]
+ObserverPanel["观察员面板<br/>ObserverPanel.tsx"]
 end
 subgraph "后端"
 WSGI["WSGI入口<br/>wsgi.py"]
@@ -51,6 +72,8 @@ AUTH["认证模块<br/>auth.py"]
 COG["认知业务层<br/>cognitive.py"]
 DELIB["博弈引擎<br/>deliberation.py"]
 OBS["观察员系统<br/>observer.py"]
+BRAIN_SUM["大脑摘要<br/>brain_summary.py"]
+ORCH["编排器架构<br/>orchestrator/*"]
 AG_SCI["科学家Agent<br/>agents/scientist.py"]
 AG_DIR["主任Agent<br/>agents/director.py"]
 AG_RES["研究员Agent<br/>agents/researcher.py"]
@@ -58,12 +81,20 @@ ENG["三轮引擎<br/>engines/three_round.py"]
 TOOLS["工具层<br/>tools/data_access.py"]
 end
 FE --> APP
+BigScreen --> APP
+BrainView --> APP
+BrainList --> APP
+Dashboard --> APP
+Login --> APP
+ObserverPanel --> APP
 WSGI --> APP
 APP --> DB
 APP --> AUTH
 APP --> COG
 APP --> DELIB
 APP --> OBS
+APP --> BRAIN_SUM
+APP --> ORCH
 APP --> AG_SCI
 APP --> AG_DIR
 APP --> AG_RES
@@ -75,16 +106,20 @@ ENG --> TOOLS
 COG --> DB
 DELIB --> DB
 OBS --> DB
+BRAIN_SUM --> DB
+ORCH --> DB
 ```
 
 **图表来源**
-- [app.py:1-1050](file://app.py#L1-L1050)
+- [app.py:1-1325](file://app.py#L1-L1325)
 - [wsgi.py:1-83](file://wsgi.py#L1-L83)
 - [database.py:1-662](file://database.py#L1-L662)
 - [auth.py:1-251](file://auth.py#L1-L251)
 - [cognitive.py:1-325](file://cognitive.py#L1-L325)
 - [deliberation.py:1-419](file://deliberation.py#L1-L419)
 - [observer.py:1-172](file://observer.py#L1-L172)
+- [brain_summary.py:1-200](file://brain_summary.py#L1-L200)
+- [orchestrator/__init__.py:1-83](file://orchestrator/__init__.py#L1-L83)
 - [researcher.py:1-114](file://agents/researcher.py#L1-L114)
 - [scientist.py:1-75](file://agents/scientist.py#L1-L75)
 - [director.py:1-124](file://agents/director.py#L1-L124)
@@ -115,6 +150,9 @@ OBS --> DB
   - **新增**：多智能体博弈引擎，支持发起、执行、投票、判定等完整流程
 - 观察员系统
   - **新增**：上帝视角监控，支持自动总结与手动触发
+- **新增**：模块化编排器架构
+  - **新增**：事件驱动的大脑思考调度，支持大脑启动、暂停、恢复、停止和状态查询
+  - **新增**：大脑摘要功能，支持自动生成和手动触发思考总结
 - Agent与引擎
   - 科学家：生成指令与初始主题
   - 主任：每日复盘、队列治理、记忆积累
@@ -125,13 +163,15 @@ OBS --> DB
 **章节来源**
 - [app.py:69-137](file://app.py#L69-L137)
 - [app.py:190-376](file://app.py#L190-L376)
-- [app.py:507-1050](file://app.py#L507-L1050)
+- [app.py:507-1325](file://app.py#L507-L1325)
 - [database.py:118-151](file://database.py#L118-L151)
 - [database.py:603-662](file://database.py#L603-L662)
 - [auth.py:196-223](file://auth.py#L196-L223)
 - [cognitive.py:1-325](file://cognitive.py#L1-L325)
 - [deliberation.py:121-419](file://deliberation.py#L121-L419)
 - [observer.py:136-172](file://observer.py#L136-L172)
+- [brain_summary.py:1-200](file://brain_summary.py#L1-L200)
+- [orchestrator/__init__.py:1-83](file://orchestrator/__init__.py#L1-L83)
 - [researcher.py:14-114](file://agents/researcher.py#L14-L114)
 - [scientist.py:14-75](file://agents/scientist.py#L14-L75)
 - [director.py:14-124](file://agents/director.py#L14-L124)
@@ -139,13 +179,15 @@ OBS --> DB
 - [data_access.py:10-43](file://tools/data_access.py#L10-L43)
 
 ## 架构总览
-下图展示API到数据库与Agent/引擎的交互关系，以及新增的认证、大脑管理、博弈系统、观察员监控模块如何与现有系统集成。
+下图展示API到数据库与Agent/引擎的交互关系，以及新增的认证、大脑管理、博弈系统、观察员监控、模块化编排器架构、大脑摘要功能如何与现有系统集成。
 
 ```mermaid
 sequenceDiagram
 participant Client as "客户端"
 participant Flask as "Flask路由<br/>app.py"
 participant Auth as "认证模块<br/>auth.py"
+participant Orchestrator as "编排器架构<br/>orchestrator/*"
+participant BrainSummary as "大脑摘要<br/>brain_summary.py"
 participant Cog as "认知业务层<br/>cognitive.py"
 participant Delib as "博弈引擎<br/>deliberation.py"
 participant Obs as "观察员系统<br/>observer.py"
@@ -157,15 +199,23 @@ alt 需要认证
 Flask->>Auth : "验证JWT令牌"
 Auth-->>Flask : "用户信息或401"
 end
+Flask->>Orchestrator : "调用编排器API"
+Flask->>BrainSummary : "调用大脑摘要API"
 Flask->>Cog : "调用认知业务逻辑"
 Flask->>Delib : "调用博弈引擎"
 Flask->>Obs : "调用观察员系统"
+Orchestrator->>DB : "读写/查询大脑状态"
+BrainSummary->>DB : "读写/查询摘要数据"
 Cog->>DB : "读写/查询认知数据"
 Delib->>DB : "读写/查询博弈数据"
 Obs->>DB : "读写/查询观察员数据"
+DB-->>Orchestrator : "结果/错误"
+DB-->>BrainSummary : "结果/错误"
 DB-->>Cog : "结果/错误"
 DB-->>Delib : "结果/错误"
 DB-->>Obs : "结果/错误"
+Orchestrator-->>Flask : "处理后的数据"
+BrainSummary-->>Flask : "处理后的数据"
 Cog-->>Flask : "处理后的数据"
 Delib-->>Flask : "处理后的数据"
 Obs-->>Flask : "处理后的数据"
@@ -179,8 +229,10 @@ Flask-->>Client : "JSON 响应"
 
 **图表来源**
 - [app.py:69-137](file://app.py#L69-L137)
-- [app.py:507-1050](file://app.py#L507-L1050)
+- [app.py:507-1325](file://app.py#L507-L1325)
 - [auth.py:196-223](file://auth.py#L196-L223)
+- [orchestrator/__init__.py:1-83](file://orchestrator/__init__.py#L1-L83)
+- [brain_summary.py:1-200](file://brain_summary.py#L1-L200)
 - [cognitive.py:1-325](file://cognitive.py#L1-L325)
 - [deliberation.py:121-419](file://deliberation.py#L121-L419)
 - [observer.py:136-172](file://observer.py#L136-L172)
@@ -419,6 +471,40 @@ Flask-->>Client : "JSON 响应"
 - 方法：GET
 - 路径：/ainstein/api/brains/1/frontier?limit=50&confidence_ceiling=0.7
 
+#### **新增**：大脑思考摘要管理
+- **手动生成思考摘要**
+  - 方法与路径：POST /ainstein/api/brains/{brain_id}/thinking-summary/generate
+  - 路径参数：brain_id
+  - 请求体字段：force?(默认true，强制忽略缓存重新生成)
+  - 响应：思考摘要对象
+  - 状态码：201 Created；404 Not Found；500 Internal Server Error
+- **获取大脑状态**
+  - 方法与路径：GET /ainstein/api/brains/{brain_id}/status
+  - 路径参数：brain_id
+  - 响应：大脑状态对象
+  - 状态码：200 OK；404 Not Found
+
+请求示例（手动生成思考摘要）
+- 方法：POST
+- 路径：/ainstein/api/brains/1/thinking-summary/generate
+- 请求体：{"force": true}
+
+#### **新增**：模块化编排器架构
+- **启动大脑思考**
+  - 方法与路径：POST /ainstein/api/brains/{brain_id}/start
+  - 路径参数：brain_id
+  - 响应：{"brain_id": int, "started": bool, "status": dict}
+  - 状态码：201 Created；200 OK；404 Not Found
+- **获取大脑状态**
+  - 方法与路径：GET /ainstein/api/brains/{brain_id}/status
+  - 路径参数：brain_id
+  - 响应：大脑状态对象或{"status": "not_loaded", "message": "..."}
+  - 状态码：200 OK；404 Not Found
+
+请求示例（启动大脑思考）
+- 方法：POST
+- 路径：/ainstein/api/brains/1/start
+
 #### 博弈系统接口（新增）
 - 发起博弈
   - 方法与路径：POST /ainstein/api/brains/{brain_id}/deliberations
@@ -468,12 +554,14 @@ Flask-->>Client : "JSON 响应"
 
 **章节来源**
 - [app.py:190-376](file://app.py#L190-L376)
-- [app.py:507-1050](file://app.py#L507-L1050)
+- [app.py:507-1325](file://app.py#L507-L1325)
 - [cognitive.py:1-325](file://cognitive.py#L1-L325)
 - [database.py:118-151](file://database.py#L118-L151)
 - [database.py:603-662](file://database.py#L603-L662)
 - [deliberation.py:121-419](file://deliberation.py#L121-L419)
 - [observer.py:136-172](file://observer.py#L136-L172)
+- [brain_summary.py:1-200](file://brain_summary.py#L1-L200)
+- [orchestrator/__init__.py:1-83](file://orchestrator/__init__.py#L1-L83)
 
 ### 队列管理
 - 列出队列
@@ -630,6 +718,8 @@ Flask-->>Client : "200 JSON"
   - **新增认知业务层**通过cognitive.py封装复杂的认知元素和关系逻辑
   - **新增博弈引擎**通过deliberation.py协调多智能体决策过程
   - **新增观察员系统**通过observer.py提供上帝视角监控功能
+  - **新增大脑摘要模块**通过brain_summary.py提供思考结束时的自动总结生成功能
+  - **新增编排器架构**通过orchestrator包提供事件驱动的大脑思考调度
   - Agent层依赖数据库与工具层，引擎层作为执行器
 - 外部依赖
   - LLM服务（DashScope/Anthropic兼容），通过环境变量配置
@@ -641,6 +731,8 @@ Flask-->>Client : "200 JSON"
 graph LR
 Flask["Flask路由<br/>app.py"] --> DB["数据库层<br/>database.py"]
 Flask --> Auth["认证模块<br/>auth.py"]
+Flask --> Orchestrator["编排器架构<br/>orchestrator/*"]
+Flask --> BrainSummary["大脑摘要<br/>brain_summary.py"]
 Flask --> Cog["认知业务层<br/>cognitive.py"]
 Flask --> Delib["博弈引擎<br/>deliberation.py"]
 Flask --> Obs["观察员系统<br/>observer.py"]
@@ -655,13 +747,17 @@ Engine --> Tools["工具层<br/>data_access.py"]
 Cog --> DB
 Delib --> DB
 Obs --> DB
+BrainSummary --> DB
+Orchestrator --> DB
 WSGI["WSGI入口<br/>wsgi.py"] --> Scheduler["APScheduler"]
 ```
 
 **图表来源**
 - [app.py:69-137](file://app.py#L69-L137)
-- [app.py:507-1050](file://app.py#L507-L1050)
+- [app.py:507-1325](file://app.py#L507-L1325)
 - [auth.py:196-223](file://auth.py#L196-L223)
+- [orchestrator/__init__.py:1-83](file://orchestrator/__init__.py#L1-L83)
+- [brain_summary.py:1-200](file://brain_summary.py#L1-L200)
 - [cognitive.py:1-325](file://cognitive.py#L1-L325)
 - [deliberation.py:121-419](file://deliberation.py#L121-L419)
 - [observer.py:136-172](file://observer.py#L136-L172)
@@ -688,12 +784,15 @@ WSGI["WSGI入口<br/>wsgi.py"] --> Scheduler["APScheduler"]
   - 三轮引擎限制工具调用轮次，避免LLM对话过长
   - 工具调用按需进行，减少不必要的计算
   - **新增**：博弈引擎支持并发执行多个博弈实例
+  - **新增**：编排器架构支持多大脑并发执行，每个大脑独立线程
 - 并发与异步
   - 会话启动采用线程异步执行，避免阻塞主请求
   - **新增**：观察员系统采用事件驱动架构，避免轮询开销
+  - **新增**：大脑摘要生成采用异步处理，避免阻塞主线程
 - 前端
   - 前端API封装统一错误处理，便于调试
   - **新增**：前端自动处理JWT令牌失效，跳转到登录页面
+  - **新增**：前端支持大脑状态实时更新和思考摘要展示
 
 **章节来源**
 - [database.py:113-122](file://database.py#L113-L122)
@@ -702,6 +801,8 @@ WSGI["WSGI入口<br/>wsgi.py"] --> Scheduler["APScheduler"]
 - [three_round.py:105-135](file://engines/three_round.py#L105-L135)
 - [api.ts:3-7](file://frontend/src/api.ts#L3-L7)
 - [observer.py:136-172](file://observer.py#L136-L172)
+- [brain_summary.py:1-200](file://brain_summary.py#L1-L200)
+- [orchestrator/__init__.py:1-83](file://orchestrator/__init__.py#L1-L83)
 
 ## 故障排除指南
 - 常见错误与原因
@@ -711,16 +812,19 @@ WSGI["WSGI入口<br/>wsgi.py"] --> Scheduler["APScheduler"]
   - 403 权限不足：普通用户尝试管理员操作
   - 500 内部错误：引擎执行失败或数据库事务回滚
   - **新增**：认知元素类型非法、关系跨脑创建、置信度过高或过低、博弈参与者不足
+  - **新增**：编排器大脑未启动、思考摘要生成失败、大脑状态查询超时
 - 调试步骤
   - 使用健康检查确认服务可用
   - 检查数据库初始化与Schema是否正确
   - 查看Agent日志定位引擎执行问题
   - 确认LLM API Key与Base URL配置
   - **新增**：验证JWT令牌签名与有效期、检查认知元素类型列表、确认关系源目标是否属于同一大脑
+  - **新增**：检查编排器日志确认大脑启动状态、验证思考摘要生成流程
 - 错误处理
   - 前端统一捕获非OK响应并抛出错误
   - 后端在路由中返回标准JSON错误体
   - **新增**：认证模块自动清理无效令牌
+  - **新增**：编排器架构提供大脑状态监控和异常恢复机制
 
 **章节来源**
 - [app.py:63-65](file://app.py#L63-L65)
@@ -729,9 +833,11 @@ WSGI["WSGI入口<br/>wsgi.py"] --> Scheduler["APScheduler"]
 - [cognitive.py:254-283](file://cognitive.py#L254-L283)
 - [api.ts:3-7](file://frontend/src/api.ts#L3-L7)
 - [auth.py:196-223](file://auth.py#L196-L223)
+- [brain_summary.py:1-200](file://brain_summary.py#L1-L200)
+- [orchestrator/__init__.py:1-83](file://orchestrator/__init__.py#L1-L83)
 
 ## 结论
-本API参考文档提供了AInstein平台各模块的完整接口规范与使用指南，**新增的认证、大脑管理、博弈系统、观察员监控模块**为构建智能体的认知基础设施和多智能体决策系统提供了完整的解决方案。通过明确的HTTP方法、URL模式、请求参数、响应格式与状态码，结合JWT认证、事件驱动架构、多智能体博弈引擎和上帝视角监控，开发者可以快速集成与扩展平台能力。建议在生产环境中关注数据库索引、LLM配置与文件存储路径的安全性与可靠性，同时注意新增认知数据的类型约束和关系完整性，以及JWT令牌的安全存储与轮换策略。
+本API参考文档提供了AInstein平台各模块的完整接口规范与使用指南，**新增的认证、大脑管理、博弈系统、观察员监控、模块化编排器架构、大脑摘要功能**为构建智能体的认知基础设施和多智能体决策系统提供了完整的解决方案。通过明确的HTTP方法、URL模式、请求参数、响应格式与状态码，结合JWT认证、事件驱动架构、多智能体博弈引擎、上帝视角监控、模块化编排器和自动思考摘要，开发者可以快速集成与扩展平台能力。**新增的模块化编排器架构**实现了大脑思考的事件驱动调度，**新增的大脑摘要功能**在大脑停止时自动生成思考总结，这些改进显著提升了系统的智能化水平和用户体验。建议在生产环境中关注数据库索引、LLM配置与文件存储路径的安全性与可靠性，同时注意新增认知数据的类型约束和关系完整性，以及JWT令牌的安全存储与轮换策略，还有编排器架构的监控和异常处理机制。
 
 ## 附录
 
@@ -746,6 +852,7 @@ WSGI["WSGI入口<br/>wsgi.py"] --> Scheduler["APScheduler"]
   - 为敏感环境变量（如API Key）设置最小权限与轮换策略
   - **新增**：对认知元素和关系的创建操作增加权限验证，防止跨大脑数据访问
   - **新增**：JWT令牌设置合理过期时间，定期轮换SECRET_KEY
+  - **新增**：编排器架构增加大脑状态访问控制，防止未授权操作
 
 **章节来源**
 - [auth.py:196-223](file://auth.py#L196-L223)
@@ -758,7 +865,7 @@ WSGI["WSGI入口<br/>wsgi.py"] --> Scheduler["APScheduler"]
 - 向后兼容
   - 新增字段以可选方式提供，避免破坏既有客户端
   - 保持现有字段语义不变，新增枚举值时在文档中标注
-  - **新增**：认证API采用独立的/auth路径，大脑管理API采用/brains路径，不影响现有接口兼容性
+  - **新增**：认证API采用独立的/auth路径，大脑管理API采用/brains路径，编排器API采用/brains/{brain_id}/start等路径，不影响现有接口兼容性
 - 建议
   - 引入/v1前缀并在未来演进中逐步迁移
   - 为重大变更提供弃用时间表与迁移指南
@@ -766,7 +873,7 @@ WSGI["WSGI入口<br/>wsgi.py"] --> Scheduler["APScheduler"]
 **章节来源**
 - [app.py:69-137](file://app.py#L69-L137)
 - [app.py:190-376](file://app.py#L190-L376)
-- [app.py:507-1050](file://app.py#L507-L1050)
+- [app.py:507-1325](file://app.py#L507-L1325)
 
 ### 常见使用场景
 - 场景A：创建项目并上传数据集
@@ -793,6 +900,9 @@ WSGI["WSGI入口<br/>wsgi.py"] --> Scheduler["APScheduler"]
 - **新增场景H：观察员监控与报告**
   - 步骤：GET /ainstein/api/brains/{brain_id}/observer-logs/latest -> POST /ainstein/api/brains/{brain_id}/observer-logs/generate
   - 示例路径：[获取最新日志:943-956](file://app.py#L943-L956)、[生成日志:957-976](file://app.py#L957-L976)
+- **新增场景I：大脑思考摘要与编排器管理**
+  - 步骤：POST /ainstein/api/brains/{brain_id}/start -> POST /ainstein/api/brains/{brain_id}/thinking-summary/generate -> GET /ainstein/api/brains/{brain_id}/status
+  - 示例路径：[启动大脑思考:1178-1191](file://app.py#L1178-L1191)、[手动生成思考摘要:1148-1170](file://app.py#L1148-L1170)、[获取大脑状态:1194-1208](file://app.py#L1194-L1208)
 
 **章节来源**
 - [app.py:54-58](file://app.py#L54-L58)
@@ -809,3 +919,6 @@ WSGI["WSGI入口<br/>wsgi.py"] --> Scheduler["APScheduler"]
 - [app.py:826-845](file://app.py#L826-L845)
 - [app.py:943-956](file://app.py#L943-L956)
 - [app.py:957-976](file://app.py#L957-L976)
+- [app.py:1148-1170](file://app.py#L1148-L1170)
+- [app.py:1178-1191](file://app.py#L1178-L1191)
+- [app.py:1194-1208](file://app.py#L1194-L1208)

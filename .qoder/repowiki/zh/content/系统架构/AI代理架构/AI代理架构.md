@@ -6,6 +6,7 @@
 - [agents/researcher.py](file://agents/researcher.py)
 - [agents/director.py](file://agents/director.py)
 - [agents/llm_client.py](file://agents/llm_client.py)
+- [agents/framework.py](file://agents/framework.py)
 - [engines/base.py](file://engines/base.py)
 - [engines/three_round.py](file://engines/three_round.py)
 - [tools/registry.py](file://tools/registry.py)
@@ -17,6 +18,8 @@
 - [app.py](file://app.py)
 - [event_bus.py](file://event_bus.py)
 - [cognitive.py](file://cognitive.py)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 - [prompts/scientist.txt](file://prompts/scientist.txt)
 - [prompts/director.txt](file://prompts/director.txt)
 - [prompts/three_round.txt](file://prompts/three_round.txt)
@@ -29,6 +32,8 @@
 - 新增认知元素和代理关系管理章节
 - 更新架构图以体现新的智能体通信模式
 - 新增事件总线和观察者日志机制
+- 新增编排器（Orchestrator）作为大脑生命周期管理的核心组件
+- 新增创世主脑（Master Brain）概念和全局唯一性管理
 
 ## 目录
 1. [引言](#引言)
@@ -49,6 +54,7 @@
 该系统采用"大脑层-智能体层-引擎层-工具层-数据层-配置层-接口层"的分层组织方式：
 - 大脑层：以brain_id为中心的智能体容器，管理智能体状态、认知元素和代理关系。
 - 智能体层：科学家、研究员、主任智能体基于大脑进行协作，通过事件总线进行通信。
+- 编排器层：编排器（Orchestrator）作为大脑生命周期管理的核心组件，协调智能体的创建、激活和状态管理。
 - 引擎层：抽象引擎接口与具体"三轮"引擎实现，定义研究流程与上下文。
 - 工具层：内置统计与网络检索工具注册与分发，支持LLM驱动的工具调用。
 - 数据层：SQLite数据库封装，提供大脑、认知元素、代理关系、观察者日志等CRUD能力。
@@ -67,6 +73,10 @@ BRAIN["大脑管理<br/>database.py:get_brain()"]
 REL["代理关系<br/>database.py:get_cognitive_relations()"]
 LOG["观察者日志<br/>database.py:add_observer_log()"]
 SNAP["大脑快照<br/>database.py:add_brain_snapshot()"]
+MB["创世主脑<br/>master_brain_tactics.py"]
+end
+subgraph "编排器层"
+ORCH["编排器<br/>orchestrator.py"]
 end
 subgraph "智能体层"
 Sci["科学家智能体<br/>agents/scientist.py"]
@@ -75,6 +85,7 @@ Dir["主任智能体<br/>agents/director.py"]
 LLM["LLM客户端<br/>agents/llm_client.py"]
 EB["事件总线<br/>event_bus.py"]
 COG["认知模块<br/>cognitive.py"]
+FW["框架<br/>agents/framework.py"]
 end
 subgraph "引擎层"
 Base["引擎基类<br/>engines/base.py"]
@@ -122,6 +133,8 @@ TR --> PSci
 TR --> PDir
 TR --> PTR
 DB -.-> CFG
+ORCH --> MB
+ORCH --> EB
 ```
 
 **图表来源**
@@ -132,6 +145,8 @@ DB -.-> CFG
 - [database.py:858-868](file://database.py#L858-L868)
 - [event_bus.py:69-104](file://event_bus.py#L69-L104)
 - [cognitive.py](file://cognitive.py)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 
 **章节来源**
 - [app.py:183-189](file://app.py#L183-L189)
@@ -141,9 +156,13 @@ DB -.-> CFG
 - [database.py:858-868](file://database.py#L858-L868)
 - [event_bus.py:69-104](file://event_bus.py#L69-L104)
 - [cognitive.py](file://cognitive.py)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 
 ## 核心组件
 - **大脑管理**：以brain_id为核心的智能体容器，管理智能体状态、前沿分数和活跃时间，提供大脑生命周期管理功能。
+- **编排器**：大脑生命周期管理的核心组件，负责智能体的创建、激活、暂停和归档，协调大脑状态转换。
+- **创世主脑**：全局唯一的主脑实例（brains.id = 1），由WSGI启动时检查并初始化，永不消亡且不可删除。
 - **认知元素**：智能体思考过程的结构化表示，包括观察、问题、假设、证据、结论等认知阶段的元素化管理。
 - **代理关系**：智能体间的连接关系，通过关系强度和类型描述智能体间的协作模式和知识传递。
 - **观察者日志**：记录智能体的观察行为和认知过程，支持后续分析和审计。
@@ -177,14 +196,17 @@ DB -.-> CFG
 - [prompts/scientist.txt:1-32](file://prompts/scientist.txt#L1-L32)
 - [prompts/director.txt:1-43](file://prompts/director.txt#L1-L43)
 - [prompts/three_round.txt:1-15](file://prompts/three_round.txt#L1-L15)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 
 ## 架构总览
-系统通过Flask API对外提供REST服务，内部以大脑为核心载体，智能体基于brain_id进行协作。通过事件总线实现智能体间的异步通信，数据库作为唯一事实源，贯穿智能体的状态流转与结果沉淀。认知元素和代理关系提供了智能体思考过程的结构化表示和协作机制。
+系统通过Flask API对外提供REST服务，内部以大脑为核心载体，智能体基于brain_id进行协作。通过事件总线实现智能体间的异步通信，数据库作为唯一事实源，贯穿智能体的状态流转与结果沉淀。编排器负责大脑生命周期管理，创世主脑提供全局唯一性保障。认知元素和代理关系提供了智能体思考过程的结构化表示和协作机制。
 
 ```mermaid
 graph TB
 Client["客户端/前端"] --> API["Flask API"]
 API --> Brain["大脑管理"]
+Brain --> Orchestrator["编排器"]
 Brain --> Sci["科学家智能体"]
 Brain --> Res["研究员智能体"]
 Brain --> Dir["主任智能体"]
@@ -206,6 +228,8 @@ Tools --> Web["网络数据工具"]
 LLM --> CFG["配置"]
 DB -.-> CFG
 Brain -.-> EB
+Brain -.-> Orchestrator
+Orchestrator --> MasterBrain["创世主脑"]
 ```
 
 **图表来源**
@@ -213,33 +237,40 @@ Brain -.-> EB
 - [database.py:571-574](file://database.py#L571-L574)
 - [event_bus.py:69-104](file://event_bus.py#L69-L104)
 - [cognitive.py](file://cognitive.py)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 
 **章节来源**
 - [app.py:183-189](file://app.py#L183-L189)
 - [database.py:571-574](file://database.py#L571-L574)
 - [event_bus.py:69-104](file://event_bus.py#L69-L104)
 - [cognitive.py](file://cognitive.py)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 
 ## 详细组件分析
 
 ### 基于brain_id的智能体中心架构
 - **大脑作为智能体容器**：每个brain_id代表一个独立的智能体空间，包含完整的认知状态和代理关系。
-- **智能体生命周期**：通过大脑状态管理实现智能体的创建、激活、暂停和归档。
+- **编排器生命周期管理**：编排器负责大脑的创建、激活、暂停和归档，协调智能体状态转换。
 - **事件驱动通信**：智能体通过事件总线进行异步通信，实现松耦合的协作模式。
 - **认知元素管理**：将智能体的思考过程结构化为认知元素，支持跨智能体的知识共享和推理。
+- **创世主脑全局唯一性**：主脑在数据库中是brains.id = 1，永不消亡，归属管理员。
 
 ```mermaid
 sequenceDiagram
 participant Client as "客户端"
 participant API as "API层"
+participant Orchestrator as "编排器"
 participant Brain as "大脑管理"
 participant EB as "事件总线"
 participant Agent as "智能体"
 Client->>API : "POST /brains/{brain_id}"
-API->>Brain : "_ensure_brain()"
+API->>Orchestrator : "管理大脑生命周期"
+Orchestrator->>Brain : "_ensure_brain()"
 Brain->>Brain : "创建/激活大脑"
-Brain-->>API : "大脑就绪"
-API->>EB : "发布 BRAIN_CREATED 事件"
+Brain-->>Orchestrator : "大脑就绪"
+Orchestrator->>EB : "发布 BRAIN_CREATED 事件"
 EB->>Agent : "广播智能体创建"
 Agent->>Agent : "初始化智能体状态"
 Agent-->>Client : "智能体已就绪"
@@ -249,11 +280,15 @@ Agent-->>Client : "智能体已就绪"
 - [app.py:183-189](file://app.py#L183-L189)
 - [database.py:571-574](file://database.py#L571-L574)
 - [event_bus.py:99-104](file://event_bus.py#L99-L104)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 
 **章节来源**
 - [app.py:183-189](file://app.py#L183-L189)
 - [database.py:571-574](file://database.py#L571-L574)
 - [event_bus.py:99-104](file://event_bus.py#L99-L104)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 
 ### 认知元素与代理关系管理
 - **认知元素生命周期**：从观察（observation）到洞察（insight）的完整认知过程，每个阶段对应特定的认知元素类型。
@@ -456,6 +491,8 @@ Done --> End
 
 ### 生命周期管理
 - **大脑初始化**：应用启动时初始化数据库与索引，通过_ensure_brain函数确保大脑存在。
+- **编排器协调**：编排器负责大脑生命周期管理，包括创建、激活、暂停和归档。
+- **创世主脑管理**：主脑在数据库中是brains.id = 1，永不消亡，归属管理员。
 - **智能体执行**：科学家生成指令与主题；研究员执行会话并写入结果；主任每日治理与沉淀。
 - **监控**：通过API列出大脑、认知元素、代理关系、观察者日志；支持分页与过滤。
 - **清理**：数据库事务封装，异常回滚，保证一致性。
@@ -464,9 +501,12 @@ Done --> End
 - [app.py:15-19](file://app.py#L15-L19)
 - [app.py:183-189](file://app.py#L183-L189)
 - [database.py:101-123](file://database.py#L101-L123)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 
 ## 依赖关系分析
 - **大脑对智能体**：所有智能体都依赖大脑管理；大脑依赖事件总线进行智能体间通信。
+- **编排器对大脑**：编排器协调大脑生命周期管理，确保大脑状态的一致性。
 - **智能体对引擎**：研究员智能体依赖三轮引擎；引擎依赖LLM客户端与工具注册表。
 - **认知模块**：智能体通过认知模块管理认知元素和代理关系。
 - **数据依赖**：所有组件均依赖数据库封装；数据访问工具负责加载数据集并生成摘要。
@@ -476,6 +516,8 @@ Done --> End
 graph LR
 Brain["大脑管理"] --> DB["数据库封装"]
 Brain --> EB["事件总线"]
+Brain --> Orchestrator["编排器"]
+Orchestrator --> MasterBrain["创世主脑"]
 Sci["科学家智能体"] --> Brain
 Res["研究员智能体"] --> Brain
 Dir["主任智能体"] --> Brain
@@ -508,6 +550,8 @@ LLM --> CFG
 - [tools/web_data.py:13-164](file://tools/web_data.py#L13-L164)
 - [database.py:101-344](file://database.py#L101-L344)
 - [config.py:4-11](file://config.py#L4-L11)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 
 **章节来源**
 - [database.py:571-574](file://database.py#L571-L574)
@@ -528,6 +572,7 @@ LLM --> CFG
 - **数据库事务**：使用上下文管理器与回滚，减少锁竞争与不一致风险。
 - **索引优化**：针对队列、会话、发现、记忆、数据集建立索引，提升查询效率。
 - **并发执行**：API中会话执行使用守护线程异步启动，避免阻塞请求。
+- **编排器负载均衡**：编排器协调多个大脑的生命周期，避免资源争用。
 
 **章节来源**
 - [database.py:590-600](file://database.py#L590-L600)
@@ -539,9 +584,11 @@ LLM --> CFG
 - [database.py:110-123](file://database.py#L110-L123)
 - [database.py:92-97](file://database.py#L92-L97)
 - [app.py:97-104](file://app.py#L97-L104)
+- [orchestrator.py](file://orchestrator.py)
 
 ## 故障排查指南
 - **大脑管理异常**：检查大脑是否存在和状态是否正确；查看大脑状态更新日志。
+- **编排器协调失败**：检查编排器是否正确管理大脑生命周期；确认大脑状态转换逻辑。
 - **事件总线通信失败**：检查事件订阅和发布机制；确认事件格式符合blueprint规范。
 - **认知元素创建失败**：确认认知元素类型和关系有效性；检查数据库约束。
 - **代理关系查询异常**：核对src_id、dst_id、relation参数；检查索引完整性。
@@ -551,6 +598,7 @@ LLM --> CFG
 - **工具执行异常**：检查工具参数是否完整；确认数据集存在且可读；查看工具返回的错误信息。
 - **数据库异常**：确认数据库初始化完成；检查外键约束与事务回滚逻辑。
 - **队列/会话状态异常**：核对状态转换逻辑（pending/picked/completed/failed/open/validated/rejected）。
+- **创世主脑异常**：检查主脑是否存在且状态正确；确认主脑的全局唯一性。
 
 **章节来源**
 - [database.py:571-574](file://database.py#L571-L574)
@@ -562,9 +610,11 @@ LLM --> CFG
 - [engines/three_round.py:109-111](file://engines/three_round.py#L109-L111)
 - [tools/registry.py:40-42](file://tools/registry.py#L40-L42)
 - [database.py:118-121](file://database.py#L118-L121)
+- [orchestrator.py](file://orchestrator.py)
+- [master_brain_tactics.py](file://master_brain_tactics.py)
 
 ## 结论
-本架构以"基于brain_id的智能体中心架构"为核心，通过事件驱动的通信机制和认知元素管理系统，实现了从传统项目角色模型向智能体协作模式的转变。大脑作为智能体的容器，提供了统一的状态管理和知识存储；事件总线支持智能体间的异步协作；认知元素和代理关系为智能体的思考过程提供了结构化的表示。数据库作为统一事实源，保障了状态一致性与可观测性。建议在生产环境中进一步完善重试与熔断策略、引入指标采集与告警，并扩展更多外部数据源与分析工具。
+本架构以"基于brain_id的智能体中心架构"为核心，通过事件驱动的通信机制和认知元素管理系统，实现了从传统项目角色模型向智能体协作模式的转变。大脑作为智能体的容器，提供了统一的状态管理和知识存储；编排器负责大脑生命周期管理，确保智能体状态的一致性；事件总线支持智能体间的异步协作；认知元素和代理关系为智能体的思考过程提供了结构化的表示。数据库作为统一事实源，保障了状态一致性与可观测性。创世主脑提供全局唯一性保障，确保系统的稳定性和可靠性。建议在生产环境中进一步完善重试与熔断策略、引入指标采集与告警，并扩展更多外部数据源与分析工具。
 
 ## 附录
 - **API端点概览（节选）**
@@ -573,6 +623,7 @@ LLM --> CFG
   - 代理关系：GET /ainstein/api/brains/{brain_id}/cognitive-relations
   - 观察者日志：GET /ainstein/api/brains/{brain_id}/observer-logs
   - 智能体：POST /ainstein/api/brains/{brain_id}/scientist/run, POST /ainstein/api/brains/{brain_id}/director/run
+  - 编排器：POST /ainstein/api/brains/{brain_id}/orchestrate
 
 **章节来源**
 - [app.py:180-250](file://app.py#L180-L250)
@@ -580,3 +631,4 @@ LLM --> CFG
 - [database.py:664-666](file://database.py#L664-L666)
 - [database.py:837-845](file://database.py#L837-L845)
 - [database.py:847-853](file://database.py#L847-L853)
+- [orchestrator.py](file://orchestrator.py)

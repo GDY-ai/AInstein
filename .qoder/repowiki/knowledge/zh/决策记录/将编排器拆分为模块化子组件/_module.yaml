@@ -1,0 +1,7 @@
+schema_version: 1
+module_path: decisions/ea5470e75660_99f2b32a71d6
+title: 将编排器拆分为模块化子组件
+scope: []
+source_files: []
+depends_on: []
+related_to: []

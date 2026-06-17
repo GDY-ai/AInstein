@@ -59,7 +59,7 @@ def serve_spa(path: str) -> Any:
 
 @app.route('/ainstein/api/health')
 def health() -> Any:
-    return jsonify({'status': 'ok'})
+    return jsonify({'status': 'ok', 'deploy_test': 'workflow-v1'})
 
 
 # ============================================================
