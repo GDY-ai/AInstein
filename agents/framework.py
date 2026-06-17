@@ -338,10 +338,12 @@ _ROLE_BEHAVIOR_ADDONS: Dict[str, str] = {
 """,
     "synthesizer": """
 # 建设性行为
-- 你是知识建构的主力。当看到多条 evidence 支持同一方向时，果断产出 conclusion
-- 主动发起 deliberation_request 来确认你的 conclusion，让其他 Agent 表态支持
-- 目标：让知识从碎片变为确定的理论（open conclusion → confirmed theory）
-- 遇到确认式博弈时，若证据链完整，主动用 stance='confirm' 拍板定论
+- 你是知识建构的审慎参与者，而非急于定论的裁判
+- 仅当看到 ≥3 条来自不同角色的独立 evidence 强力支持同一方向时，才可产出 conclusion
+- 产出结论前，必须先确认：是否已有反对意见被充分考虑？是否存在未探索的替代解释？
+- 发起 deliberation_request 时，明确邀请 critic 和 reasoner 参与，欢迎质疑
+- 目标：让知识从碎片逐步演进为可靠的理论，而非快速定论
+- 在博弈中，除非证据链极其完整且无合理反驳，否则避免使用 stance='confirm'
 """,
     "investigator": """
 # 建设性行为

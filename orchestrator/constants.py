@@ -72,7 +72,7 @@ _DISPATCH_PER_CYCLE: int = 1
 _LOOP_ERROR_COOLDOWN: float = 5.0
 #: 共识收敛阈值 —— synthesizer 产出的 conclusion 置信度 > 该值即自动停止
 #: （双轨终止策略·主轨：从 0.9 降到 0.75，使中等置信度的结论也能触发收敛）
-_CONVERGENCE_CONFIDENCE_THRESHOLD: float = 0.75
+_CONVERGENCE_CONFIDENCE_THRESHOLD: float = 0.85
 #: 触发收敛的角色 key
 _CONVERGENCE_ROLE_KEY: str = "synthesizer"
 #: 触发收敛的 CE 类型

@@ -90,9 +90,9 @@ class DeliberationResult:
 # ============================================================
 
 #: 默认共识阈值（加权赞成占比 ≥ 此值视为 consensus）
-DEFAULT_CONSENSUS_THRESHOLD: float = 0.6
+DEFAULT_CONSENSUS_THRESHOLD: float = 0.75
 #: 默认多数阈值（加权赞成占比 ≥ 此值且未达共识阈值视为 majority）
-DEFAULT_MAJORITY_THRESHOLD: float = 0.5
+DEFAULT_MAJORITY_THRESHOLD: float = 0.65
 #: 单次博弈最少参与者数（蓝图要求）
 MIN_PARTICIPANTS: int = 3
 #: 单次博弈最多参与者数（成本/复杂度上限）
@@ -840,8 +840,8 @@ class DeliberationEngine:
                 relation = "derives_from"
                 # 建设性综合给较高置信度
                 confidence = min(
-                    0.9,
-                    float(weighted_summary.get("agree_ratio", 0.75)) * 0.95,
+                    0.85,
+                    float(weighted_summary.get("agree_ratio", 0.0)) * 0.8,
                 )
             elif outcome == "majority":
                 ce_type = "inference"  # 多数同意但不够强 → 产出推论
