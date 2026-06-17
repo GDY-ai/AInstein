@@ -7,30 +7,33 @@ import type { Brain } from '../types';
 interface GraphNode {
   id: number;
   brain: Brain;
+  // 极坐标（绕主脑环绕）
+  angle: number;
+  vAngle: number;
+  targetAngle: number;
+  orbitR: number;
+  // 屏幕坐标缓存
   x: number;
   y: number;
-  vx: number;
-  vy: number;
   radius: number;
   color: string;
-  glowColor: string;
   isMaster: boolean;
-  ownerIndex: number; // 用于水平分组的 owner 索引
-  ownerCount: number; // 同 owner 的总数（用于簇宽度估算）
-  ownerSlot: number;  // 在 owner 内部的序号
+  ownerSlot: number;
+}
+
+interface FiberPulse {
+  t: number;
+  speed: number;
+  alpha: number;
 }
 
 interface GraphEdge {
   source: GraphNode;
   target: GraphNode;
-  particles: Particle[];
-}
-
-interface Particle {
-  t: number; // 0~1 progress along edge
-  speed: number;
-  size: number;
-  alpha: number;
+  curlSign: number;
+  curlAmount: number;
+  curlPhase: number;
+  pulses: FiberPulse[];
 }
 
 interface BgStar {
@@ -44,123 +47,147 @@ interface BgStar {
 
 // ===================== 常量 =====================
 
-const OWNER_COLORS = [
-  '#00d4ff', '#ff6b9d', '#c084fc', '#34d399',
-  '#fbbf24', '#f97316', '#06b6d4', '#a78bfa',
-  '#fb7185', '#4ade80', '#38bdf8', '#e879f9',
+const SPHERE_COLORS = [
+  '#4fd1c5', '#6b46c1', '#ed8936', '#90cdf4', '#d53f8c', '#a0aec0',
+  '#81e6d9', '#9f7aea', '#f6ad55', '#bee3f8', '#f687b3', '#cbd5e0',
 ];
 
 const STATE_COLORS: Record<string, string> = {
-  active: '#00ff88',
-  thinking: '#00ff88',
-  dormant: '#4488ff',
-  paused: '#4488ff',
-  completed: '#ffffff',
-  archived: '#666666',
-  gestating: '#fbbf24',
+  active: '#7be3d3',
+  thinking: '#7be3d3',
+  dormant: '#7aa3d6',
+  paused: '#7aa3d6',
+  completed: '#dfe7f3',
+  archived: '#5b6478',
+  gestating: '#f6c179',
 };
 
-// 布局区域比例（相对于画布高度）
-const MASTER_Y_RATIO = 0.16;       // 主脑固定 Y 位置
-const BRANCH_Y_TOP_RATIO = 0.42;   // 分支区域上界
-const BRANCH_Y_BOT_RATIO = 0.86;   // 分支区域下界
-const BRANCH_Y_CENTER_RATIO = 0.64; // 分支重力锚点（向下偏置）
+// ===================== 大脑低多边形几何 =====================
 
-// ===================== 力导向算法 =====================
+// 大脑侧面轮廓 + 内部顶点（归一化到 [-1, 1]）
+const BRAIN_VERTICES_RAW: Array<[number, number]> = [
+  // 上轮廓 (gyri 起伏波形)
+  [-0.96, -0.20], [-0.92, -0.42], [-0.84, -0.62], [-0.72, -0.76],
+  [-0.58, -0.82], [-0.42, -0.86], [-0.26, -0.84], [-0.10, -0.88],
+  [ 0.06, -0.86], [ 0.22, -0.82], [ 0.38, -0.84], [ 0.54, -0.76],
+  [ 0.68, -0.64], [ 0.80, -0.46], [ 0.90, -0.24],
+  // 后轮廓 (枕叶)
+  [ 0.96, -0.02], [ 0.94,  0.20], [ 0.86,  0.36],
+  // 下后轮廓 (小脑)
+  [ 0.74,  0.50], [ 0.58,  0.58], [ 0.44,  0.62], [ 0.30,  0.66],
+  // 脑干
+  [ 0.14,  0.70], [-0.02,  0.78], [-0.16,  0.72],
+  // 下前轮廓 (颞叶)
+  [-0.32,  0.58], [-0.50,  0.52], [-0.66,  0.42], [-0.80,  0.26],
+  [-0.92,  0.06], [-0.98, -0.14],
+  // 0..30 共 31 点（外轮廓）
 
-function applyForces(
-  nodes: GraphNode[],
-  edges: GraphEdge[],
-  width: number,
-  height: number,
-  ownerCount: number,
-) {
-  const masterX = width / 2;
-  const masterY = height * MASTER_Y_RATIO;
-  const branchTop = height * BRANCH_Y_TOP_RATIO;
-  const branchBot = height * BRANCH_Y_BOT_RATIO;
-  const branchCenterY = height * BRANCH_Y_CENTER_RATIO;
+  // 内部第一层
+  [-0.78, -0.42], [-0.62, -0.58], [-0.46, -0.62], [-0.28, -0.62],
+  [-0.10, -0.64], [ 0.08, -0.62], [ 0.26, -0.60], [ 0.44, -0.58],
+  [ 0.60, -0.50], [ 0.72, -0.32], [ 0.78, -0.10], [ 0.74,  0.12],
+  [ 0.62,  0.30], [ 0.46,  0.42], [ 0.28,  0.48], [ 0.08,  0.50],
+  [-0.10,  0.50], [-0.30,  0.38], [-0.48,  0.30], [-0.62,  0.16],
+  [-0.74, -0.04], [-0.78, -0.26],
+  // 31..52 共 22 点
 
-  const repulsion = 6500;
-  const damping = 0.88;
-  const xSpring = 0.012;       // 水平弹簧力（向 owner 锚点）
-  const yGravity = 0.006;      // 垂直向下重力（向 branchCenterY 收拢）
-  const edgeSpringX = 0.0003;  // 连线的横向拉力（很弱，避免分支被拉到主脑下方）
+  // 内部第二层
+  [-0.54, -0.34], [-0.36, -0.40], [-0.18, -0.42], [ 0.00, -0.42],
+  [ 0.18, -0.40], [ 0.36, -0.36], [ 0.52, -0.22], [ 0.56,  0.00],
+  [ 0.42,  0.20], [ 0.22,  0.28], [ 0.02,  0.30], [-0.18,  0.22],
+  [-0.36,  0.12], [-0.50, -0.02], [-0.54, -0.18],
+  // 53..67 共 15 点
 
-  // 计算 owner 的 X 锚点：均匀分布在画布宽度内（带边距）
-  const margin = Math.max(120, width * 0.08);
-  const usableWidth = width - margin * 2;
-  const ownerAnchor = (idx: number, slot: number, slotsInOwner: number) => {
-    if (ownerCount <= 1) {
-      // 单 owner：根据 slot 在整宽内分散
-      const t = slotsInOwner > 1 ? slot / (slotsInOwner - 1) : 0.5;
-      return margin + t * usableWidth;
-    }
-    const groupCenter = margin + (idx + 0.5) * (usableWidth / ownerCount);
-    // 同 owner 在簇内偏移（紧凑居中）
-    const clusterSpread = Math.min(160, usableWidth / ownerCount * 0.7);
-    const clusterT = slotsInOwner > 1 ? (slot / (slotsInOwner - 1) - 0.5) : 0;
-    return groupCenter + clusterT * clusterSpread;
+  // 核心
+  [-0.20, -0.18], [ 0.04, -0.16], [ 0.24,  0.02], [-0.06,  0.08],
+  // 68..71 共 4 点
+];
+// 共 72 个顶点
+
+// 自动生成网格边：闭合外轮廓 + 全图 kNN
+function buildBrainEdges(): Array<[number, number]> {
+  const k = 4;
+  const set = new Set<string>();
+  const add = (a: number, b: number) => {
+    const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+    set.add(key);
   };
-
-  // 节点间斥力（X 与 Y 都生效，让分支不重叠）
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) {
-      const a = nodes[i];
-      const b = nodes[j];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-      const force = repulsion / (dist * dist);
-      const fx = (dx / dist) * force;
-      const fy = (dy / dist) * force;
-      if (!a.isMaster) { a.vx -= fx; a.vy -= fy; }
-      if (!b.isMaster) { b.vx += fx; b.vy += fy; }
+  for (let i = 0; i < 31; i++) {
+    add(i, (i + 1) % 31);
+  }
+  for (let i = 0; i < BRAIN_VERTICES_RAW.length; i++) {
+    const dists: Array<[number, number]> = [];
+    for (let j = 0; j < BRAIN_VERTICES_RAW.length; j++) {
+      if (i === j) continue;
+      const dx = BRAIN_VERTICES_RAW[i][0] - BRAIN_VERTICES_RAW[j][0];
+      const dy = BRAIN_VERTICES_RAW[i][1] - BRAIN_VERTICES_RAW[j][1];
+      dists.push([j, dx * dx + dy * dy]);
+    }
+    dists.sort((a, b) => a[1] - b[1]);
+    for (let n = 0; n < k && n < dists.length; n++) {
+      add(i, dists[n][0]);
     }
   }
+  return Array.from(set).map(s => {
+    const [a, b] = s.split('-').map(Number);
+    return [a, b] as [number, number];
+  });
+}
 
-  // 连线弹簧力：仅作用于 X 方向上的轻微拉力，避免上下被强行拉拢
-  for (const edge of edges) {
-    if (edge.source.isMaster && !edge.target.isMaster) {
-      const dx = edge.target.x - edge.source.x;
-      // 让分支轻微向主脑正下方靠拢，但只在 X 上施力
-      edge.target.vx -= dx * edgeSpringX;
+const BRAIN_EDGES = buildBrainEdges();
+
+// ===================== 径向力布局 =====================
+
+function applyRadialForces(nodes: GraphNode[], width: number, height: number) {
+  const cx = width / 2;
+  const cy = height / 2;
+  const minSide = Math.min(width, height);
+  const orbitR = minSide * 0.36;
+
+  const branches = nodes.filter(n => !n.isMaster);
+  const N = branches.length;
+
+  const angularRepulsion = 0.0009;
+  const angularDamping = 0.86;
+  const targetSpring = 0.012;
+
+  for (let i = 0; i < N; i++) {
+    const a = branches[i];
+    a.orbitR = orbitR;
+
+    let dAngle = a.targetAngle - a.angle;
+    while (dAngle > Math.PI) dAngle -= Math.PI * 2;
+    while (dAngle < -Math.PI) dAngle += Math.PI * 2;
+    a.vAngle += dAngle * targetSpring;
+
+    for (let j = 0; j < N; j++) {
+      if (i === j) continue;
+      const b = branches[j];
+      let diff = a.angle - b.angle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const absDiff = Math.abs(diff) + 0.0001;
+      const force = angularRepulsion / (absDiff * absDiff);
+      a.vAngle += Math.sign(diff) * force;
     }
+
+    a.vAngle *= angularDamping;
+    a.angle += a.vAngle;
   }
 
-  // 对分支节点：水平向 owner 锚点弹簧力 + 垂直向下重力
-  for (const node of nodes) {
-    if (node.isMaster) continue;
-    const targetX = ownerAnchor(node.ownerIndex, node.ownerSlot, node.ownerCount);
-    node.vx += (targetX - node.x) * xSpring;
-    node.vy += (branchCenterY - node.y) * yGravity;
-  }
-
-  // 应用速度并约束
   for (const node of nodes) {
     if (node.isMaster) {
-      node.x = masterX;
-      node.y = masterY;
-      node.vx = 0;
-      node.vy = 0;
+      node.x = cx;
+      node.y = cy;
+      node.angle = 0;
+      node.vAngle = 0;
       continue;
     }
-    node.vx *= damping;
-    node.vy *= damping;
-    node.x += node.vx;
-    node.y += node.vy;
-    // X 边界
-    const mx = node.radius + 16;
-    node.x = Math.max(mx, Math.min(width - mx, node.x));
-    // Y 限制在分支区域内
-    if (node.y < branchTop) {
-      node.y = branchTop;
-      if (node.vy < 0) node.vy = 0;
-    }
-    if (node.y > branchBot) {
-      node.y = branchBot;
-      if (node.vy > 0) node.vy = 0;
-    }
+    // 椭圆轨道（横向稍宽）
+    const ex = orbitR * 1.05;
+    const ey = orbitR * 0.78;
+    node.x = cx + Math.cos(node.angle) * ex;
+    node.y = cy + Math.sin(node.angle) * ey;
   }
 }
 
@@ -172,8 +199,6 @@ export default function BigScreen() {
   const nodesRef = useRef<GraphNode[]>([]);
   const edgesRef = useRef<GraphEdge[]>([]);
   const bgStarsRef = useRef<BgStar[]>([]);
-  const ownerCountRef = useRef<number>(1);
-  const mouseRef = useRef<{ x: number; y: number }>({ x: -1000, y: -1000 });
   const hoveredNodeRef = useRef<GraphNode | null>(null);
   const [hoveredBrain, setHoveredBrain] = useState<Brain | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -184,22 +209,15 @@ export default function BigScreen() {
   const dragRef = useRef<{ dragging: boolean; lastX: number; lastY: number }>({ dragging: false, lastX: 0, lastY: 0 });
   const timeRef = useRef(0);
 
-  // Build graph from brains data
+  // ===== 构建图 =====
   const buildGraph = useCallback((brains: Brain[], width: number, height: number) => {
-    const ownerColorMap = new Map<string, string>();
-    const ownerIndexMap = new Map<string, number>();
-    const ownerSlotCounter = new Map<string, number>();
-    const ownerTotalMap = new Map<string, number>();
-    let colorIdx = 0;
-    const masterX = width / 2;
-    const masterY = height * MASTER_Y_RATIO;
-    const branchTop = height * BRANCH_Y_TOP_RATIO;
-    const branchBot = height * BRANCH_Y_BOT_RATIO;
+    const cx = width / 2;
+    const cy = height / 2;
+    const orbitR = Math.min(width, height) * 0.36;
 
     const nodes: GraphNode[] = [];
     const edges: GraphEdge[] = [];
 
-    // Sort: master first, then group by owner so cluster stays together
     const sorted = [...brains].sort((a, b) => {
       if (a.brain_type === 'master') return -1;
       if (b.brain_type === 'master') return 1;
@@ -209,84 +227,66 @@ export default function BigScreen() {
       return a.id - b.id;
     });
 
-    // 预先统计每个 owner 下的分支总数（不含 master）
-    for (const brain of sorted) {
-      if (brain.brain_type === 'master') continue;
-      const owner = brain.owner_username || 'unknown';
-      ownerTotalMap.set(owner, (ownerTotalMap.get(owner) || 0) + 1);
-    }
+    const branches = sorted.filter(b => b.brain_type !== 'master');
+    const N = Math.max(1, branches.length);
 
-    // 为非 master owner 建立索引顺序
-    let nonMasterOwnerIdx = 0;
+    let masterNode: GraphNode | null = null;
+    let branchSlot = 0;
 
     for (const brain of sorted) {
-      const owner = brain.owner_username || 'unknown';
-      if (!ownerColorMap.has(owner)) {
-        ownerColorMap.set(owner, OWNER_COLORS[colorIdx % OWNER_COLORS.length]);
-        colorIdx++;
-      }
-
       const isMaster = brain.brain_type === 'master';
-      // 主脑稍微更大（俯瞰感）
-      const radius = isMaster ? 62 : 18 + Math.min((brain.think_count || 0) * 0.5, 22);
-      const color = isMaster ? '#ffcc00' : ownerColorMap.get(owner)!;
-      const stateColor = STATE_COLORS[brain.state] || '#666666';
+      const radius = isMaster
+        ? Math.min(150, Math.max(110, Math.min(width, height) * 0.13))
+        : 28 + Math.min((brain.think_count || 0) * 0.18, 7);
+      const color = isMaster ? '#cfe4ff' : SPHERE_COLORS[branchSlot % SPHERE_COLORS.length];
 
-      let ownerIndex = 0;
-      let ownerSlot = 0;
-      const ownerCount = ownerTotalMap.get(owner) || 1;
+      let angle = 0;
+      let targetAngle = 0;
       if (!isMaster) {
-        if (!ownerIndexMap.has(owner)) {
-          ownerIndexMap.set(owner, nonMasterOwnerIdx++);
-        }
-        ownerIndex = ownerIndexMap.get(owner)!;
-        ownerSlot = ownerSlotCounter.get(owner) || 0;
-        ownerSlotCounter.set(owner, ownerSlot + 1);
+        const t = branchSlot / N;
+        targetAngle = -Math.PI / 2 + t * Math.PI * 2;
+        angle = targetAngle + (Math.random() - 0.5) * 0.2;
       }
 
-      // 初始位置：master 顶部居中；branch 在下方区域内随机散布
-      const initX = isMaster
-        ? masterX
-        : 80 + Math.random() * (width - 160);
-      const initY = isMaster
-        ? masterY
-        : branchTop + Math.random() * (branchBot - branchTop);
-
-      nodes.push({
+      const node: GraphNode = {
         id: brain.id,
         brain,
-        x: initX,
-        y: initY,
-        vx: 0,
-        vy: 0,
+        angle,
+        vAngle: 0,
+        targetAngle,
+        orbitR,
+        x: isMaster ? cx : cx + Math.cos(angle) * orbitR * 1.05,
+        y: isMaster ? cy : cy + Math.sin(angle) * orbitR * 0.78,
         radius,
         color,
-        glowColor: stateColor,
         isMaster,
-        ownerIndex,
-        ownerCount,
-        ownerSlot,
-      });
+        ownerSlot: branchSlot,
+      };
+      nodes.push(node);
+      if (isMaster) masterNode = node;
+      else branchSlot++;
     }
 
-    ownerCountRef.current = Math.max(1, nonMasterOwnerIdx);
-
-    // Build edges: master → branches
-    const masterNode = nodes.find(n => n.isMaster);
     if (masterNode) {
       for (const node of nodes) {
-        if (!node.isMaster) {
-          const particles: Particle[] = [];
-          for (let i = 0; i < 4; i++) {
-            particles.push({
-              t: Math.random(),
-              speed: 0.0025 + Math.random() * 0.0035,
-              size: 1.8 + Math.random() * 2,
-              alpha: 0.55 + Math.random() * 0.4,
-            });
-          }
-          edges.push({ source: masterNode, target: node, particles });
+        if (node.isMaster) continue;
+        const pulses: FiberPulse[] = [];
+        const pn = 2 + Math.floor(Math.random() * 2);
+        for (let i = 0; i < pn; i++) {
+          pulses.push({
+            t: Math.random(),
+            speed: 0.0018 + Math.random() * 0.0022,
+            alpha: 0.25 + Math.random() * 0.12,
+          });
         }
+        edges.push({
+          source: masterNode,
+          target: node,
+          curlSign: Math.random() > 0.5 ? 1 : -1,
+          curlAmount: 50 + Math.random() * 90,
+          curlPhase: Math.random() * Math.PI * 2,
+          pulses,
+        });
       }
     }
 
@@ -294,23 +294,23 @@ export default function BigScreen() {
     edgesRef.current = edges;
   }, []);
 
-  // Generate background stars
+  // ===== 背景星空 =====
   const generateBgStars = useCallback((width: number, height: number) => {
     const stars: BgStar[] = [];
-    for (let i = 0; i < 320; i++) {
+    for (let i = 0; i < 80; i++) {
       stars.push({
         x: Math.random() * width,
         y: Math.random() * height,
-        size: Math.random() * 1.5 + 0.5,
-        alpha: Math.random() * 0.8 + 0.2,
-        twinkleSpeed: 0.01 + Math.random() * 0.03,
+        size: 0.3 + Math.random() * 0.7,
+        alpha: 0.2 + Math.random() * 0.3,
+        twinkleSpeed: 0.004 + Math.random() * 0.012,
         twinklePhase: Math.random() * Math.PI * 2,
       });
     }
     bgStarsRef.current = stars;
   }, []);
 
-  // Fetch data
+  // ===== 数据加载 =====
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -340,7 +340,7 @@ export default function BigScreen() {
     return () => clearInterval(interval);
   }, [buildGraph, generateBgStars]);
 
-  // Animation loop
+  // ===== 渲染循环 =====
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -351,182 +351,98 @@ export default function BigScreen() {
       const w = canvas.width;
       const h = canvas.height;
       timeRef.current += 1;
+      const t = timeRef.current;
 
-      // Apply forces
-      applyForces(nodesRef.current, edgesRef.current, w, h, ownerCountRef.current);
+      applyRadialForces(nodesRef.current, w, h);
 
       ctx.save();
-      // Clear
-      ctx.fillStyle = '#000011';
+
+      // ===== 背景 =====
+      ctx.fillStyle = '#0a0e1a';
       ctx.fillRect(0, 0, w, h);
 
-      // 顶部辐射状渐变（从主脑位置发散，强化"天眼俯瞰"）
-      const masterPx = w / 2;
-      const masterPy = h * MASTER_Y_RATIO;
-      const bgGrad = ctx.createRadialGradient(masterPx, masterPy, 0, masterPx, masterPy, w * 0.85);
-      bgGrad.addColorStop(0, 'rgba(40, 30, 80, 0.45)');
-      bgGrad.addColorStop(0.4, 'rgba(15, 20, 50, 0.25)');
-      bgGrad.addColorStop(1, 'rgba(0, 0, 10, 0)');
-      ctx.fillStyle = bgGrad;
+      const cx = w / 2;
+      const cy = h / 2;
+      const fog = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.7);
+      fog.addColorStop(0, 'rgba(100, 150, 200, 0.04)');
+      fog.addColorStop(0.5, 'rgba(60, 90, 140, 0.02)');
+      fog.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = fog;
       ctx.fillRect(0, 0, w, h);
 
-      // 底部分支区域微亮的"地平面"光晕
-      const floorGrad = ctx.createLinearGradient(0, h * 0.55, 0, h);
-      floorGrad.addColorStop(0, 'rgba(20, 30, 70, 0)');
-      floorGrad.addColorStop(1, 'rgba(20, 40, 90, 0.25)');
-      ctx.fillStyle = floorGrad;
+      const bottomFog = ctx.createLinearGradient(0, h * 0.55, 0, h);
+      bottomFog.addColorStop(0, 'rgba(40, 50, 90, 0)');
+      bottomFog.addColorStop(1, 'rgba(70, 90, 140, 0.10)');
+      ctx.fillStyle = bottomFog;
       ctx.fillRect(0, h * 0.55, w, h * 0.45);
 
-      // Apply pan/zoom
+      const leftFog = ctx.createLinearGradient(0, 0, w * 0.3, 0);
+      leftFog.addColorStop(0, 'rgba(50, 40, 80, 0.08)');
+      leftFog.addColorStop(1, 'rgba(50, 40, 80, 0)');
+      ctx.fillStyle = leftFog;
+      ctx.fillRect(0, 0, w * 0.3, h);
+
+      const rightFog = ctx.createLinearGradient(w * 0.7, 0, w, 0);
+      rightFog.addColorStop(0, 'rgba(40, 50, 90, 0)');
+      rightFog.addColorStop(1, 'rgba(40, 50, 90, 0.08)');
+      ctx.fillStyle = rightFog;
+      ctx.fillRect(w * 0.7, 0, w * 0.3, h);
+
+      // 平移/缩放
       ctx.translate(offsetRef.current.x, offsetRef.current.y);
       ctx.scale(scaleRef.current, scaleRef.current);
 
-      // Background stars
+      // 星空
       for (const star of bgStarsRef.current) {
-        const twinkle = Math.sin(timeRef.current * star.twinkleSpeed + star.twinklePhase) * 0.3 + 0.7;
+        const tw = Math.sin(t * star.twinkleSpeed + star.twinklePhase) * 0.25 + 0.75;
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(200, 220, 255, ${star.alpha * twinkle})`;
+        ctx.fillStyle = `rgba(210, 225, 245, ${star.alpha * tw})`;
         ctx.fill();
       }
 
-      // Draw edges with particles (slight curves from master downward)
-      for (const edge of edgesRef.current) {
-        const { source, target } = edge;
-        const sx = source.x;
-        const sy = source.y;
-        const tx = target.x;
-        const ty = target.y;
+      // 神经纤维
+      drawFibers(ctx, edgesRef.current, t);
 
-        // 控制点：在路径中段、向横向偏移制造柔和弧线
-        const midX = (sx + tx) / 2;
-        const midY = (sy + ty) / 2;
-        const dxAbs = tx - sx;
-        // 弧线弯曲度：与水平距离成比例，且让左/右分支自然外扩
-        const curveBias = Math.sign(dxAbs) * Math.min(Math.abs(dxAbs) * 0.18, 80);
-        const cpX = midX + curveBias;
-        const cpY = midY + 30; // 略微向下凹陷
-
-        // Edge line
-        const edgeGrad = ctx.createLinearGradient(sx, sy, tx, ty);
-        edgeGrad.addColorStop(0, 'rgba(255, 210, 80, 0.45)');
-        edgeGrad.addColorStop(0.6, `${target.color}55`);
-        edgeGrad.addColorStop(1, `${target.color}22`);
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.quadraticCurveTo(cpX, cpY, tx, ty);
-        ctx.strokeStyle = edgeGrad;
-        ctx.lineWidth = 1.2;
-        ctx.shadowBlur = 6;
-        ctx.shadowColor = 'rgba(255, 200, 80, 0.35)';
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-
-        // Particles along curved edge (top → bottom)
-        for (const p of edge.particles) {
-          p.t += p.speed;
-          if (p.t > 1) p.t -= 1;
-          const t = p.t;
-          const oneMt = 1 - t;
-          // 二次贝塞尔曲线点公式
-          const px = oneMt * oneMt * sx + 2 * oneMt * t * cpX + t * t * tx;
-          const py = oneMt * oneMt * sy + 2 * oneMt * t * cpY + t * t * ty;
-          const pAlpha = p.alpha * Math.sin(t * Math.PI);
-          // 粒子双层：内核 + 外晕
-          ctx.beginPath();
-          ctx.arc(px, py, p.size * 2.4, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(255, 220, 120, ${pAlpha * 0.25})`;
-          ctx.fill();
-          ctx.beginPath();
-          ctx.arc(px, py, p.size, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(255, 240, 180, ${pAlpha})`;
-          ctx.fill();
-        }
+      // 主脑（线框）
+      const masterNode = nodesRef.current.find(n => n.isMaster);
+      if (masterNode) {
+        drawWireBrain(ctx, masterNode.x, masterNode.y, masterNode.radius, t);
       }
 
-      // Draw nodes
+      // 分支球体
       const hovered = hoveredNodeRef.current;
       for (const node of nodesRef.current) {
-        const { x, y, radius, color, glowColor, isMaster, brain } = node;
-        const isHovered = hovered === node;
-        const pulse = Math.sin(timeRef.current * 0.05) * 0.2 + 0.8;
-        const isActive = brain.state === 'active' || brain.state === 'thinking';
+        if (node.isMaster) continue;
+        const isActive = node.brain.state === 'active' || node.brain.state === 'thinking';
+        drawSphere(ctx, node, t, isActive, hovered === node);
+      }
 
-        // Glow
-        const glowRadius = isMaster ? radius * 3.4 : radius * 2;
-        const glowIntensity = isMaster ? 0.45 : (isActive ? 0.3 * pulse : 0.15);
-        const grad = ctx.createRadialGradient(x, y, radius * 0.5, x, y, glowRadius);
-        grad.addColorStop(0, glowColor + (isMaster ? '88' : '66'));
-        grad.addColorStop(0.5, glowColor + '22');
-        grad.addColorStop(1, 'transparent');
-        ctx.beginPath();
-        ctx.arc(x, y, glowRadius, 0, Math.PI * 2);
-        ctx.fillStyle = grad;
-        ctx.globalAlpha = glowIntensity + (isHovered ? 0.3 : 0);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-
-        // 主脑专属：脉冲辐射光环
-        if (isMaster) {
-          for (let r = 0; r < 3; r++) {
-            const ringPhase = (timeRef.current * 0.012 + r * 0.45) % 1;
-            const ringR = radius + ringPhase * radius * 2.8;
-            const ringAlpha = (1 - ringPhase) * 0.35;
-            ctx.beginPath();
-            ctx.arc(x, y, ringR, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(255, 220, 120, ${ringAlpha})`;
-            ctx.lineWidth = 1.2;
-            ctx.stroke();
-          }
-        }
-
-        // Node body
-        const bodyGrad = ctx.createRadialGradient(x - radius * 0.3, y - radius * 0.3, 0, x, y, radius);
-        bodyGrad.addColorStop(0, isMaster ? '#fff8e0' : lightenColor(color, 40));
-        bodyGrad.addColorStop(0.7, color);
-        bodyGrad.addColorStop(1, darkenColor(color, 30));
-        ctx.beginPath();
-        ctx.arc(x, y, radius * (isHovered ? 1.15 : 1), 0, Math.PI * 2);
-        ctx.fillStyle = bodyGrad;
-        ctx.fill();
-
-        // Active ring pulse
-        if (isActive && !isMaster) {
-          const ringRadius = radius + 5 + Math.sin(timeRef.current * 0.08) * 3;
-          ctx.beginPath();
-          ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
-          ctx.strokeStyle = `${glowColor}${Math.round(pulse * 80).toString(16).padStart(2, '0')}`;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-
-        // Master corona effect（保留日冕）
-        if (isMaster) {
-          for (let i = 0; i < 12; i++) {
-            const angle = (timeRef.current * 0.008) + (i * Math.PI * 2 / 12);
-            const coronaLen = radius + 18 + Math.sin(timeRef.current * 0.03 + i) * 12;
-            const cx2 = x + Math.cos(angle) * coronaLen;
-            const cy2 = y + Math.sin(angle) * coronaLen;
-            ctx.beginPath();
-            ctx.moveTo(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
-            ctx.lineTo(cx2, cy2);
-            ctx.strokeStyle = `rgba(255, 200, 50, ${0.32 + Math.sin(timeRef.current * 0.05 + i) * 0.22})`;
-            ctx.lineWidth = 2;
-            ctx.stroke();
-          }
-        }
-
-        // Label
-        ctx.fillStyle = '#ffffff';
-        ctx.font = isMaster ? 'bold 16px sans-serif' : '11px sans-serif';
-        ctx.textAlign = 'center';
-        // 主脑标签放在节点上方（避免被日冕遮挡），分支标签在节点下方
-        const labelY = isMaster ? y - radius - 22 : y + radius + 16;
+      // 标签
+      ctx.font = '11px "Inter", "Helvetica Neue", sans-serif';
+      ctx.textAlign = 'center';
+      for (const node of nodesRef.current) {
+        if (node.isMaster) continue;
+        const name = node.brain.name;
+        const display = name.length > 14 ? name.slice(0, 14) + '…' : name;
+        const labelY = node.y + node.radius + 18;
+        ctx.fillStyle = 'rgba(220, 230, 245, 0.85)';
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = 'rgba(20, 30, 50, 0.9)';
+        ctx.fillText(display, node.x, labelY);
+        ctx.shadowBlur = 0;
+      }
+      if (masterNode) {
+        ctx.font = '13px "Inter", "Helvetica Neue", sans-serif';
+        ctx.fillStyle = 'rgba(200, 230, 255, 0.85)';
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = 'rgba(120, 180, 255, 0.6)';
         ctx.fillText(
-          brain.name.length > 14 ? brain.name.slice(0, 14) + '…' : brain.name,
-          x,
-          labelY,
+          masterNode.brain.name,
+          masterNode.x,
+          masterNode.y + masterNode.radius + 32,
         );
+        ctx.shadowBlur = 0;
       }
 
       ctx.restore();
@@ -537,7 +453,7 @@ export default function BigScreen() {
     return () => cancelAnimationFrame(animFrameRef.current);
   }, []);
 
-  // Mouse events
+  // ===== 鼠标交互 =====
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -549,8 +465,6 @@ export default function BigScreen() {
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      mouseRef.current = { x: e.clientX, y: e.clientY };
-
       if (dragRef.current.dragging) {
         offsetRef.current.x += e.clientX - dragRef.current.lastX;
         offsetRef.current.y += e.clientY - dragRef.current.lastY;
@@ -564,7 +478,7 @@ export default function BigScreen() {
       for (const node of nodesRef.current) {
         const dx = pos.x - node.x;
         const dy = pos.y - node.y;
-        if (Math.sqrt(dx * dx + dy * dy) < node.radius + 5) {
+        if (Math.sqrt(dx * dx + dy * dy) < node.radius + 6) {
           found = node;
           break;
         }
@@ -584,7 +498,6 @@ export default function BigScreen() {
       e.preventDefault();
       const delta = e.deltaY > 0 ? 0.9 : 1.1;
       const newScale = Math.max(0.3, Math.min(3, scaleRef.current * delta));
-      // Zoom toward cursor
       const mx = e.clientX;
       const my = e.clientY;
       offsetRef.current.x = mx - (mx - offsetRef.current.x) * (newScale / scaleRef.current);
@@ -619,7 +532,7 @@ export default function BigScreen() {
     };
   }, []);
 
-  // Resize
+  // ===== 窗口缩放 =====
   useEffect(() => {
     const handleResize = () => {
       const canvas = canvasRef.current;
@@ -627,91 +540,126 @@ export default function BigScreen() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
       generateBgStars(canvas.width, canvas.height);
+      const master = nodesRef.current.find(n => n.isMaster);
+      if (master) {
+        master.radius = Math.min(150, Math.max(110, Math.min(canvas.width, canvas.height) * 0.13));
+      }
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [generateBgStars]);
 
   return (
-    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: '#000011', position: 'relative' }}>
+    <div style={{
+      width: '100vw', height: '100vh', overflow: 'hidden',
+      background: '#0a0e1a', position: 'relative',
+    }}>
       <canvas
         ref={canvasRef}
         style={{ display: 'block', width: '100%', height: '100%' }}
       />
 
-      {/* Loading */}
       {loading && (
         <div style={{
           position: 'absolute', inset: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: '#4488ff', fontSize: 18, fontFamily: 'sans-serif',
+          color: '#7aa3d6', fontSize: 16, fontFamily: '"Inter", sans-serif',
+          letterSpacing: 4,
         }}>
           正在加载大脑拓扑数据…
         </div>
       )}
 
-      {/* Title */}
       <div style={{
-        position: 'absolute', top: 24, left: '50%', transform: 'translateX(-50%)',
-        color: '#ffffff', fontSize: 20, fontWeight: 700, letterSpacing: 4,
-        fontFamily: 'sans-serif', textShadow: '0 0 20px rgba(100,150,255,0.5)',
-        opacity: 0.9, pointerEvents: 'none',
-      }}>
-        ✦ AInstein · 硅基大脑拓扑全景 ✦
-      </div>
-
-      {/* Stats Overlay */}
-      <div style={{
-        position: 'absolute', bottom: 30, left: 30,
-        color: '#aaccff', fontSize: 13, fontFamily: 'monospace',
-        background: 'rgba(0,5,20,0.7)', borderRadius: 8, padding: '12px 18px',
-        border: '1px solid rgba(60,100,200,0.3)', backdropFilter: 'blur(6px)',
+        position: 'absolute', top: 28, left: '50%', transform: 'translateX(-50%)',
+        color: 'rgba(220, 235, 255, 0.9)', fontSize: 18, fontWeight: 500,
+        letterSpacing: 6,
+        fontFamily: '"Inter", "Helvetica Neue", sans-serif',
+        textShadow: '0 0 24px rgba(120, 180, 255, 0.45)',
         pointerEvents: 'none',
       }}>
-        <div style={{ marginBottom: 4 }}>
-          <span style={{ color: '#4488ff' }}>■</span> 大脑总数：<span style={{ color: '#fff', fontWeight: 600 }}>{stats.total}</span>
+        AInstein · 硅基大脑态势全景
+      </div>
+
+      <div style={{
+        position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',
+        width: 120, height: 1,
+        background: 'linear-gradient(90deg, transparent, rgba(150,200,255,0.5), transparent)',
+        pointerEvents: 'none',
+      }} />
+
+      <div style={{
+        position: 'absolute', bottom: 32, left: 32,
+        color: '#a8bdd8', fontSize: 12, fontFamily: '"JetBrains Mono", "Menlo", monospace',
+        background: 'rgba(15, 22, 38, 0.55)', borderRadius: 6, padding: '14px 20px',
+        border: '1px solid rgba(120, 160, 220, 0.18)',
+        backdropFilter: 'blur(10px)',
+        boxShadow: '0 4px 24px rgba(0, 0, 0, 0.4)',
+        pointerEvents: 'none',
+        letterSpacing: 0.5,
+      }}>
+        <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 6, height: 6, background: '#90cdf4', borderRadius: 1, display: 'inline-block' }} />
+          <span style={{ color: '#7a8da8' }}>大脑总数</span>
+          <span style={{ color: '#e0ecff', fontWeight: 500 }}>{stats.total}</span>
         </div>
-        <div style={{ marginBottom: 4 }}>
-          <span style={{ color: '#00ff88' }}>■</span> 活跃中：<span style={{ color: '#00ff88', fontWeight: 600 }}>{stats.active}</span>
+        <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 6, height: 6, background: '#7be3d3', borderRadius: 1, display: 'inline-block' }} />
+          <span style={{ color: '#7a8da8' }}>活跃中  </span>
+          <span style={{ color: '#7be3d3', fontWeight: 500 }}>{stats.active}</span>
         </div>
-        <div>
-          <span style={{ color: '#c084fc' }}>■</span> 认知元素：<span style={{ color: '#c084fc', fontWeight: 600 }}>{stats.totalCE}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 6, height: 6, background: '#c3a5e8', borderRadius: 1, display: 'inline-block' }} />
+          <span style={{ color: '#7a8da8' }}>认知元素</span>
+          <span style={{ color: '#c3a5e8', fontWeight: 500 }}>{stats.totalCE}</span>
         </div>
       </div>
 
-      {/* Tooltip */}
+      <div style={{
+        position: 'absolute', bottom: 32, right: 32,
+        color: 'rgba(150, 180, 220, 0.4)', fontSize: 10,
+        fontFamily: '"JetBrains Mono", monospace', letterSpacing: 2,
+        pointerEvents: 'none',
+      }}>
+        TOPOLOGY · LIVE FEED
+      </div>
+
       {hoveredBrain && (
         <div style={{
           position: 'absolute',
           left: tooltipPos.x,
           top: tooltipPos.y,
-          background: 'rgba(5, 10, 30, 0.92)',
-          border: '1px solid rgba(80,140,255,0.4)',
-          borderRadius: 8,
-          padding: '12px 16px',
-          color: '#ddeeff',
+          background: 'rgba(15, 22, 38, 0.92)',
+          border: '1px solid rgba(120, 160, 220, 0.35)',
+          borderRadius: 6,
+          padding: '14px 18px',
+          color: '#dce6f5',
           fontSize: 12,
-          fontFamily: 'monospace',
+          fontFamily: '"JetBrains Mono", "Menlo", monospace',
           pointerEvents: 'none',
-          backdropFilter: 'blur(8px)',
-          maxWidth: 300,
+          backdropFilter: 'blur(10px)',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+          maxWidth: 320,
           zIndex: 999,
         }}>
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6, color: '#fff' }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6, color: '#f0f6ff', letterSpacing: 0.5 }}>
             {hoveredBrain.name}
           </div>
-          <div style={{ marginBottom: 3, color: '#88aacc' }}>
-            {hoveredBrain.seed_question?.slice(0, 60)}{(hoveredBrain.seed_question?.length || 0) > 60 ? '…' : ''}
+          <div style={{ marginBottom: 8, color: '#8aa0c0', fontSize: 11, lineHeight: 1.5 }}>
+            {hoveredBrain.seed_question?.slice(0, 70)}{(hoveredBrain.seed_question?.length || 0) > 70 ? '…' : ''}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px', marginTop: 6 }}>
-            <span>状态：<b style={{ color: STATE_COLORS[hoveredBrain.state] || '#fff' }}>{hoveredBrain.state}</b></span>
-            <span>类型：{hoveredBrain.brain_type || 'standalone'}</span>
-            <span>思考轮次：{hoveredBrain.think_count ?? 0}</span>
-            <span>CE 数量：{hoveredBrain.ce_count ?? 0}</span>
-            <span>Agent 数：{hoveredBrain.agent_count ?? 0}</span>
-            <span>Owner：{hoveredBrain.owner_username || '—'}</span>
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 14px',
+            paddingTop: 8, borderTop: '1px solid rgba(120,160,220,0.15)',
+          }}>
+            <span><span style={{ color: '#6a7a96' }}>状态</span> <b style={{ color: STATE_COLORS[hoveredBrain.state] || '#fff' }}>{hoveredBrain.state}</b></span>
+            <span><span style={{ color: '#6a7a96' }}>类型</span> {hoveredBrain.brain_type || 'standalone'}</span>
+            <span><span style={{ color: '#6a7a96' }}>思考</span> {hoveredBrain.think_count ?? 0}</span>
+            <span><span style={{ color: '#6a7a96' }}>CE</span> {hoveredBrain.ce_count ?? 0}</span>
+            <span><span style={{ color: '#6a7a96' }}>Agent</span> {hoveredBrain.agent_count ?? 0}</span>
+            <span><span style={{ color: '#6a7a96' }}>Owner</span> {hoveredBrain.owner_username || '—'}</span>
           </div>
-          <div style={{ marginTop: 6, color: '#667788', fontSize: 11 }}>
+          <div style={{ marginTop: 8, color: '#5a6a86', fontSize: 10 }}>
             创建于 {hoveredBrain.created_at?.slice(0, 16).replace('T', ' ')}
           </div>
         </div>
@@ -720,9 +668,271 @@ export default function BigScreen() {
   );
 }
 
-// ===================== 工具函数 =====================
+// ===================== 绘制：低多边形大脑 =====================
 
-function lightenColor(hex: string, percent: number): string {
+function drawWireBrain(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  t: number,
+) {
+  // 呼吸缩放 0.97 ~ 1.03
+  const breath = 1 + Math.sin(t * 0.022) * 0.03;
+  const scale = radius * breath;
+
+  // 内部体积感渐变
+  const innerR = scale * 0.95;
+  const volumeGrad = ctx.createRadialGradient(cx - innerR * 0.2, cy - innerR * 0.25, 0, cx, cy, innerR);
+  volumeGrad.addColorStop(0, 'rgba(255, 255, 255, 0.08)');
+  volumeGrad.addColorStop(0.4, 'rgba(180, 210, 240, 0.04)');
+  volumeGrad.addColorStop(1, 'rgba(80, 110, 160, 0)');
+
+  ctx.save();
+  ctx.beginPath();
+  for (let i = 0; i < 31; i++) {
+    const v = BRAIN_VERTICES_RAW[i];
+    const px = cx + v[0] * scale;
+    const py = cy + v[1] * scale;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = volumeGrad;
+  ctx.fill();
+  ctx.restore();
+
+  // mesh 边
+  ctx.save();
+  ctx.shadowBlur = 8;
+  ctx.shadowColor = 'rgba(180, 220, 255, 0.55)';
+  ctx.strokeStyle = 'rgba(200, 230, 255, 0.55)';
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  for (const [a, b] of BRAIN_EDGES) {
+    const va = BRAIN_VERTICES_RAW[a];
+    const vb = BRAIN_VERTICES_RAW[b];
+    ctx.moveTo(cx + va[0] * scale, cy + va[1] * scale);
+    ctx.lineTo(cx + vb[0] * scale, cy + vb[1] * scale);
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  // 顶点高光
+  ctx.save();
+  ctx.shadowBlur = 6;
+  ctx.shadowColor = 'rgba(200, 230, 255, 0.7)';
+  ctx.fillStyle = 'rgba(230, 245, 255, 0.85)';
+  for (let i = 0; i < BRAIN_VERTICES_RAW.length; i++) {
+    const v = BRAIN_VERTICES_RAW[i];
+    const px = cx + v[0] * scale;
+    const py = cy + v[1] * scale;
+    ctx.beginPath();
+    ctx.arc(px, py, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 外圈柔光晕
+  const auraR = scale * 1.4;
+  const aura = ctx.createRadialGradient(cx, cy, scale * 0.85, cx, cy, auraR);
+  aura.addColorStop(0, 'rgba(150, 200, 255, 0.18)');
+  aura.addColorStop(0.5, 'rgba(120, 170, 230, 0.06)');
+  aura.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = aura;
+  ctx.beginPath();
+  ctx.arc(cx, cy, auraR, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// ===================== 绘制：3D 抛光球体 =====================
+
+function drawSphere(
+  ctx: CanvasRenderingContext2D,
+  node: GraphNode,
+  t: number,
+  isActive: boolean,
+  isHovered: boolean,
+) {
+  const { x, y, color } = node;
+  const r = node.radius * (isHovered ? 1.08 : 1);
+
+  // 底部投影
+  ctx.save();
+  const shadowGrad = ctx.createRadialGradient(x, y + r * 0.95, 0, x, y + r * 0.95, r * 1.2);
+  shadowGrad.addColorStop(0, 'rgba(0, 0, 0, 0.35)');
+  shadowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = shadowGrad;
+  ctx.beginPath();
+  ctx.ellipse(x, y + r * 0.95, r * 1.0, r * 0.25, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // 球体主渐变
+  const dark = darkenHex(color, 55);
+  const mid = color;
+  const light = lightenHex(color, 35);
+
+  const hlX = x - r * 0.35;
+  const hlY = y - r * 0.4;
+  const bodyGrad = ctx.createRadialGradient(hlX, hlY, r * 0.05, x, y, r * 1.05);
+  bodyGrad.addColorStop(0, light);
+  bodyGrad.addColorStop(0.35, mid);
+  bodyGrad.addColorStop(1, dark);
+
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+
+  // 底部环境光反射
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.clip();
+  const rim = ctx.createRadialGradient(x, y + r * 0.6, r * 0.1, x, y + r * 0.6, r * 1.1);
+  rim.addColorStop(0, 'rgba(255, 255, 255, 0)');
+  rim.addColorStop(0.7, 'rgba(255, 255, 255, 0)');
+  rim.addColorStop(0.92, rgbaFromHex(lightenHex(color, 50), 0.35));
+  rim.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = rim;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  ctx.restore();
+
+  // 高光镜面亮点
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x - r * 0.38, y - r * 0.42, r * 0.18, 0, Math.PI * 2);
+  const spec = ctx.createRadialGradient(
+    x - r * 0.38, y - r * 0.42, 0,
+    x - r * 0.38, y - r * 0.42, r * 0.18,
+  );
+  spec.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
+  spec.addColorStop(0.5, 'rgba(255, 255, 255, 0.25)');
+  spec.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = spec;
+  ctx.fill();
+  ctx.restore();
+
+  // active 流光漫反射
+  if (isActive) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.clip();
+    const flowAngle = (t * 0.012) % (Math.PI * 2);
+    const fx = x + Math.cos(flowAngle) * r * 0.2;
+    const fy = y + Math.sin(flowAngle) * r * 0.2 - r * 0.1;
+    const flow = ctx.createRadialGradient(fx, fy, 0, fx, fy, r * 0.9);
+    flow.addColorStop(0, rgbaFromHex(lightenHex(color, 60), 0.20));
+    flow.addColorStop(0.5, rgbaFromHex(lightenHex(color, 30), 0.08));
+    flow.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = flow;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    ctx.restore();
+  }
+
+  // 边缘暗轮廓
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.strokeStyle = rgbaFromHex(darkenHex(color, 70), 0.4);
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+
+  // hover 柔光
+  if (isHovered) {
+    const hover = ctx.createRadialGradient(x, y, r, x, y, r * 1.6);
+    hover.addColorStop(0, rgbaFromHex(color, 0.4));
+    hover.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.beginPath();
+    ctx.arc(x, y, r * 1.6, 0, Math.PI * 2);
+    ctx.fillStyle = hover;
+    ctx.fill();
+  }
+}
+
+// ===================== 绘制：神经纤维 =====================
+
+function drawFibers(ctx: CanvasRenderingContext2D, edges: GraphEdge[], t: number) {
+  ctx.save();
+  ctx.shadowBlur = 4;
+  ctx.shadowColor = 'rgba(150, 200, 255, 0.3)';
+
+  for (const edge of edges) {
+    const { source, target, curlSign, curlAmount, curlPhase } = edge;
+    const sxC = source.x;
+    const syC = source.y;
+    const txC = target.x;
+    const tyC = target.y;
+
+    const dx = txC - sxC;
+    const dy = tyC - syC;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const ux = dx / dist;
+    const uy = dy / dist;
+
+    // 起止点偏移到球体表面
+    const sx = sxC + ux * source.radius * 0.9;
+    const sy = syC + uy * source.radius * 0.9;
+    const tx = txC - ux * target.radius * 0.95;
+    const ty = tyC - uy * target.radius * 0.95;
+
+    const nx = -uy;
+    const ny = ux;
+
+    const breath = Math.sin(t * 0.015 + curlPhase) * 0.3 + 1;
+    const cp1Off = curlAmount * 0.7 * breath * curlSign;
+    const cp2Off = curlAmount * 0.5 * breath * (-curlSign);
+
+    const cp1x = sx + dx * 0.30 + nx * cp1Off;
+    const cp1y = sy + dy * 0.30 + ny * cp1Off;
+    const cp2x = sx + dx * 0.70 + nx * cp2Off;
+    const cp2y = sy + dy * 0.70 + ny * cp2Off;
+
+    // 主线
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tx, ty);
+    ctx.strokeStyle = 'rgba(180, 220, 255, 0.25)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+
+    // 极淡辉光叠加
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tx, ty);
+    ctx.strokeStyle = 'rgba(200, 230, 255, 0.08)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    // 沿线脉冲点
+    for (const p of edge.pulses) {
+      p.t += p.speed;
+      if (p.t > 1) p.t -= 1;
+      const u = p.t;
+      const omU = 1 - u;
+      const px = omU * omU * omU * sx
+        + 3 * omU * omU * u * cp1x
+        + 3 * omU * u * u * cp2x
+        + u * u * u * tx;
+      const py = omU * omU * omU * sy
+        + 3 * omU * omU * u * cp1y
+        + 3 * omU * u * u * cp2y
+        + u * u * u * ty;
+      const fade = Math.sin(u * Math.PI);
+      ctx.beginPath();
+      ctx.arc(px, py, 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(220, 240, 255, ${p.alpha * fade})`;
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
+}
+
+// ===================== 颜色工具 =====================
+
+function lightenHex(hex: string, percent: number): string {
   const num = parseInt(hex.replace('#', ''), 16);
   const r = Math.min(255, ((num >> 16) & 0xff) + percent);
   const g = Math.min(255, ((num >> 8) & 0xff) + percent);
@@ -730,10 +940,28 @@ function lightenColor(hex: string, percent: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
-function darkenColor(hex: string, percent: number): string {
+function darkenHex(hex: string, percent: number): string {
   const num = parseInt(hex.replace('#', ''), 16);
   const r = Math.max(0, ((num >> 16) & 0xff) - percent);
   const g = Math.max(0, ((num >> 8) & 0xff) - percent);
   const b = Math.max(0, (num & 0xff) - percent);
   return `rgb(${r},${g},${b})`;
+}
+
+function rgbaFromHex(input: string, alpha: number): string {
+  let r = 255, g = 255, b = 255;
+  if (input.startsWith('#')) {
+    const num = parseInt(input.replace('#', ''), 16);
+    r = (num >> 16) & 0xff;
+    g = (num >> 8) & 0xff;
+    b = num & 0xff;
+  } else if (input.startsWith('rgb')) {
+    const m = input.match(/\d+/g);
+    if (m && m.length >= 3) {
+      r = parseInt(m[0], 10);
+      g = parseInt(m[1], 10);
+      b = parseInt(m[2], 10);
+    }
+  }
+  return `rgba(${r},${g},${b},${alpha})`;
 }
