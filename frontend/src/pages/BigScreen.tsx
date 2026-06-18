@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { api } from '../api';
 import type { Brain } from '../types';
+import { BRAIN_OUTLINE, BRAIN_SULCI, CEREBELLUM_LINES } from './brain-data';
 
 // ===================== 类型定义 =====================
 
@@ -61,73 +62,6 @@ const STATE_COLORS: Record<string, string> = {
   archived: '#5b6478',
   gestating: '#f6c179',
 };
-
-// ===================== 大脑写实形状（贝塞尔路径） =====================
-
-// 大脑侧面外轮廓控制点（归一化到 [-1, 1]，y 向下为正）
-// 顺时针：起点位于额叶前下方
-const BRAIN_OUTLINE: Array<[number, number]> = [
-  [-0.74,  0.18],   // 0  额叶前下
-  [-0.82, -0.06],   // 1  额叶前缘
-  [-0.84, -0.34],   // 2  额叶前缘上升
-  [-0.74, -0.60],   // 3  额叶前上
-  [-0.58, -0.78],   // 4  额叶顶（饱满圆润）
-  [-0.36, -0.86],   // 5  额顶交界
-  [-0.10, -0.88],   // 6  顶叶顶（最高点）
-  [ 0.18, -0.84],   // 7  顶叶
-  [ 0.42, -0.74],   // 8  顶枕交界
-  [ 0.60, -0.56],   // 9  枕叶上
-  [ 0.74, -0.30],   // 10 枕叶后
-  [ 0.78, -0.05],   // 11 枕叶下后
-  [ 0.72,  0.13],   // 12 枕叶底
-  [ 0.58,  0.20],   // 13 小脑分界凹陷
-  [ 0.70,  0.34],   // 14 小脑外缘
-  [ 0.66,  0.50],   // 15 小脑下
-  [ 0.48,  0.56],   // 16 小脑左下
-  [ 0.30,  0.50],   // 17 小脑根（凹）
-  [ 0.20,  0.62],   // 18 脑干右
-  [ 0.02,  0.66],   // 19 脑干底
-  [-0.18,  0.58],   // 20 脑干左
-  [-0.34,  0.48],   // 21 颞叶下
-  [-0.54,  0.44],   // 22 颞叶
-  [-0.70,  0.36],   // 23 颞叶前下
-  [-0.78,  0.28],   // 24 颞叶前
-];
-
-// 脑沟曲线：每条由 [起点, 控制点1, 控制点2, 终点] 组成（归一化坐标）
-const BRAIN_SULCI: Array<[
-  [number, number], [number, number], [number, number], [number, number]
-]> = [
-  // 中央沟（Rolando）：从顶部偏前向下弯曲
-  [[-0.05, -0.82], [-0.10, -0.50], [-0.16, -0.20], [-0.18,  0.05]],
-  // 外侧裂（Sylvian）：水平大沟分隔颞叶
-  [[-0.62,  0.02], [-0.32, -0.12], [ 0.02, -0.06], [ 0.32,  0.06]],
-  // 额前沟
-  [[-0.58, -0.50], [-0.55, -0.34], [-0.50, -0.18], [-0.44, -0.04]],
-  // 额上沟
-  [[-0.34, -0.74], [-0.32, -0.55], [-0.28, -0.36], [-0.24, -0.18]],
-  // 顶枕沟
-  [[ 0.22, -0.72], [ 0.28, -0.50], [ 0.34, -0.28], [ 0.38, -0.06]],
-  // 颞上沟
-  [[-0.44,  0.16], [-0.20,  0.10], [ 0.04,  0.18], [ 0.26,  0.22]],
-  // 颞下沟
-  [[-0.32,  0.30], [-0.12,  0.28], [ 0.06,  0.32], [ 0.20,  0.34]],
-  // 扣带沟（弧形横贯顶部内侧）
-  [[-0.42, -0.40], [-0.18, -0.52], [ 0.14, -0.50], [ 0.34, -0.42]],
-  // 枕侧小沟
-  [[ 0.50, -0.48], [ 0.56, -0.32], [ 0.60, -0.16], [ 0.62,  0.00]],
-  // 额下沟
-  [[-0.66, -0.18], [-0.56, -0.06], [-0.46,  0.04], [-0.36,  0.10]],
-];
-
-// 小脑横纹（独立的密集弧线，模拟小脑叶片）
-const CEREBELLUM_LINES: Array<[
-  [number, number], [number, number], [number, number], [number, number]
-]> = [
-  [[ 0.34,  0.26], [ 0.46,  0.24], [ 0.58,  0.28], [ 0.66,  0.34]],
-  [[ 0.32,  0.36], [ 0.46,  0.34], [ 0.58,  0.38], [ 0.64,  0.44]],
-  [[ 0.34,  0.46], [ 0.46,  0.44], [ 0.56,  0.46], [ 0.60,  0.50]],
-];
 
 // ===================== 径向力布局 =====================
 
@@ -744,17 +678,42 @@ function drawBrain(
   ctx.fillStyle = inner;
   ctx.fillRect(-s * 1.2, -s * 1.2, s * 2.4, s * 2.4);
 
+  // 多点平滑曲线绘制器（quadraticCurveTo 经过中点法）
+  const drawSmoothPath = (
+    points: Array<[number, number]>,
+    scale: number,
+    offX = 0,
+    offY = 0,
+  ) => {
+    if (points.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(points[0][0] * scale + offX, points[0][1] * scale + offY);
+    if (points.length === 2) {
+      ctx.lineTo(points[1][0] * scale + offX, points[1][1] * scale + offY);
+      return;
+    }
+    for (let i = 1; i < points.length - 1; i++) {
+      const xc = ((points[i][0] + points[i + 1][0]) / 2) * scale + offX;
+      const yc = ((points[i][1] + points[i + 1][1]) / 2) * scale + offY;
+      ctx.quadraticCurveTo(
+        points[i][0] * scale + offX,
+        points[i][1] * scale + offY,
+        xc, yc,
+      );
+    }
+    const last = points[points.length - 1];
+    const prev = points[points.length - 2];
+    ctx.quadraticCurveTo(
+      prev[0] * scale + offX, prev[1] * scale + offY,
+      last[0] * scale + offX, last[1] * scale + offY,
+    );
+  };
+
   // 脑沟暗影（先画暗一档，制造凹陷感）
   ctx.strokeStyle = 'rgba(40, 70, 120, 0.32)';
   ctx.lineWidth = Math.max(0.6, s * 0.005);
   for (const sul of BRAIN_SULCI) {
-    ctx.beginPath();
-    ctx.moveTo(sul[0][0] * s + s * 0.006, sul[0][1] * s + s * 0.010);
-    ctx.bezierCurveTo(
-      sul[1][0] * s + s * 0.006, sul[1][1] * s + s * 0.010,
-      sul[2][0] * s + s * 0.006, sul[2][1] * s + s * 0.010,
-      sul[3][0] * s + s * 0.006, sul[3][1] * s + s * 0.010,
-    );
+    drawSmoothPath(sul.points, s, s * 0.006, s * 0.010);
     ctx.stroke();
   }
 
@@ -764,13 +723,7 @@ function drawBrain(
   ctx.shadowBlur = 4;
   ctx.shadowColor = 'rgba(120, 170, 220, 0.35)';
   for (const sul of BRAIN_SULCI) {
-    ctx.beginPath();
-    ctx.moveTo(sul[0][0] * s, sul[0][1] * s);
-    ctx.bezierCurveTo(
-      sul[1][0] * s, sul[1][1] * s,
-      sul[2][0] * s, sul[2][1] * s,
-      sul[3][0] * s, sul[3][1] * s,
-    );
+    drawSmoothPath(sul.points, s);
     ctx.stroke();
   }
   ctx.shadowBlur = 0;
@@ -779,11 +732,11 @@ function drawBrain(
   ctx.strokeStyle = 'rgba(130, 170, 220, 0.55)';
   ctx.lineWidth = Math.max(1.0, s * 0.008);
   ctx.beginPath();
-  ctx.moveTo(0.58 * s, 0.20 * s);
+  ctx.moveTo(0.60 * s, 0.10 * s);
   ctx.bezierCurveTo(
-    0.42 * s, 0.30 * s,
-    0.32 * s, 0.42 * s,
-    0.30 * s, 0.50 * s,
+    0.45 * s, 0.25 * s,
+    0.30 * s, 0.35 * s,
+    0.25 * s, 0.38 * s,
   );
   ctx.stroke();
 
@@ -791,13 +744,7 @@ function drawBrain(
   ctx.strokeStyle = 'rgba(140, 178, 222, 0.36)';
   ctx.lineWidth = Math.max(0.7, s * 0.005);
   for (const c of CEREBELLUM_LINES) {
-    ctx.beginPath();
-    ctx.moveTo(c[0][0] * s, c[0][1] * s);
-    ctx.bezierCurveTo(
-      c[1][0] * s, c[1][1] * s,
-      c[2][0] * s, c[2][1] * s,
-      c[3][0] * s, c[3][1] * s,
-    );
+    drawSmoothPath(c.points, s);
     ctx.stroke();
   }
 
