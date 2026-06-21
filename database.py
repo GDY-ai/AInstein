@@ -317,6 +317,36 @@ CREATE TABLE IF NOT EXISTS paper_shares (
 );
 CREATE INDEX IF NOT EXISTS idx_ps_token ON paper_shares(share_token);
 CREATE INDEX IF NOT EXISTS idx_ps_brain ON paper_shares(brain_id, created_at);
+
+-- ========= 发现社区（Discovery Square） =========
+
+CREATE TABLE IF NOT EXISTS discoveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    brain_id INTEGER NOT NULL,
+    ce_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT,
+    domain_tags TEXT,
+    likes_count INTEGER DEFAULT 0,
+    saves_count INTEGER DEFAULT 0,
+    is_featured INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (brain_id) REFERENCES brains(id),
+    FOREIGN KEY (ce_id) REFERENCES cognitive_elements(id)
+);
+CREATE INDEX IF NOT EXISTS idx_disc_brain ON discoveries(brain_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_disc_ce ON discoveries(ce_id);
+
+CREATE TABLE IF NOT EXISTS user_discovery_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    discovery_id INTEGER NOT NULL,
+    action_type TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, discovery_id, action_type)
+);
+CREATE INDEX IF NOT EXISTS idx_uda_user ON user_discovery_actions(user_id);
+CREATE INDEX IF NOT EXISTS idx_uda_disc ON user_discovery_actions(discovery_id);
 """
 
 
@@ -1516,3 +1546,137 @@ def create_evidence_with_relation(
                     new_ce_id, related_dst_id,
                 )
     return int(new_ce_id) if new_ce_id is not None else 0
+
+
+# ============================================================
+# 发现社区（Discovery Square）
+# ============================================================
+
+def create_discovery(
+    brain_id: int,
+    ce_id: int,
+    title: str,
+    summary: Optional[str] = None,
+    domain_tags: Optional[str] = None,
+) -> int:
+    """创建发现记录。对同一个 CE 重复插入会被志愿忍让。返回新记录 id（或 0 表示已存在）。"""
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO discoveries (brain_id, ce_id, title, summary, domain_tags) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (brain_id, ce_id, title, summary, domain_tags),
+        )
+        return int(cur.lastrowid or 0)
+
+
+def list_discoveries(
+    sort: str = 'hot', limit: int = 50, offset: int = 0
+) -> List[Dict[str, Any]]:
+    """列出发现。sort 取值：hot / new / top。"""
+    order = {
+        'hot': '(d.likes_count + d.saves_count) DESC, d.created_at DESC',
+        'new': 'd.created_at DESC',
+        'top': 'd.likes_count DESC, d.created_at DESC',
+    }.get(sort, 'd.created_at DESC')
+    sql = (
+        "SELECT d.id, d.brain_id, d.ce_id, d.title, d.summary, d.domain_tags, "
+        "       d.likes_count, d.saves_count, d.is_featured, d.created_at, "
+        "       b.name AS brain_name, b.seed_question "
+        "FROM discoveries d "
+        "LEFT JOIN brains b ON d.brain_id = b.id "
+        f"ORDER BY {order} LIMIT ? OFFSET ?"
+    )
+    with get_db() as conn:
+        rows = conn.execute(sql, (limit, offset)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def toggle_discovery_action(
+    user_id: int, discovery_id: int, action_type: str
+) -> bool:
+    """切换点赞/收藏。返回 True=新增，False=取消。"""
+    if action_type not in ('like', 'save'):
+        raise ValueError(f"unsupported action_type: {action_type}")
+    field = 'likes_count' if action_type == 'like' else 'saves_count'
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM user_discovery_actions "
+            "WHERE user_id=? AND discovery_id=? AND action_type=?",
+            (user_id, discovery_id, action_type),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "DELETE FROM user_discovery_actions WHERE id=?",
+                (existing['id'],),
+            )
+            conn.execute(
+                f"UPDATE discoveries SET {field} = MAX(0, {field} - 1) WHERE id=?",
+                (discovery_id,),
+            )
+            return False
+        conn.execute(
+            "INSERT INTO user_discovery_actions (user_id, discovery_id, action_type) "
+            "VALUES (?, ?, ?)",
+            (user_id, discovery_id, action_type),
+        )
+        conn.execute(
+            f"UPDATE discoveries SET {field} = {field} + 1 WHERE id=?",
+            (discovery_id,),
+        )
+        return True
+
+
+def get_user_discovery_actions(user_id: int) -> List[Dict[str, Any]]:
+    """获取用户所有点赞/收藏记录。"""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT discovery_id, action_type FROM user_discovery_actions WHERE user_id=?",
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_user_saved_discoveries(
+    user_id: int, limit: int = 50, offset: int = 0
+) -> List[Dict[str, Any]]:
+    """获取用户收藏的发现。"""
+    sql = (
+        "SELECT d.id, d.brain_id, d.ce_id, d.title, d.summary, d.domain_tags, "
+        "       d.likes_count, d.saves_count, d.is_featured, d.created_at, "
+        "       b.name AS brain_name, b.seed_question "
+        "FROM discoveries d "
+        "JOIN user_discovery_actions uda ON d.id = uda.discovery_id "
+        "LEFT JOIN brains b ON d.brain_id = b.id "
+        "WHERE uda.user_id=? AND uda.action_type='save' "
+        "ORDER BY uda.created_at DESC LIMIT ? OFFSET ?"
+    )
+    with get_db() as conn:
+        rows = conn.execute(sql, (user_id, limit, offset)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def auto_create_discoveries(brain_id: int, threshold: float = 0.75, limit: int = 10) -> int:
+    """大脑收敛时，将高置信结论自动发布为发现。返回新增记录数。"""
+    sql = (
+        "SELECT id, content, domain_tags FROM cognitive_elements "
+        "WHERE brain_id=? AND type IN ('conclusion','consensus','insight') "
+        "AND confidence >= ? "
+        "ORDER BY confidence DESC LIMIT ?"
+    )
+    with get_db() as conn:
+        ces = conn.execute(sql, (brain_id, threshold, limit)).fetchall()
+    created = 0
+    for ce in ces:
+        content = ce['content'] or ''
+        title = (content[:80] or f"Discovery from brain {brain_id}").strip()
+        summary = content[:300] if content else None
+        new_id = create_discovery(
+            brain_id=brain_id,
+            ce_id=int(ce['id']),
+            title=title,
+            summary=summary,
+            domain_tags=ce['domain_tags'],
+        )
+        if new_id:
+            created += 1
+    return created

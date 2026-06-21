@@ -493,6 +493,14 @@ def stop_brain_api(brain_id: int) -> Any:
     except Exception:
         logger.exception('orchestrator stop pipeline failed brain=%s', brain_id)
 
+    # 自动将高置信结论入库为发现
+    try:
+        created = db.auto_create_discoveries(brain_id)
+        if created:
+            logger.info('auto_create_discoveries brain=%s created=%d', brain_id, created)
+    except Exception:
+        logger.exception('auto_create_discoveries failed brain=%s', brain_id)
+
     try:
         from event_bus import EventBus, EventTypes
         EventBus.instance().publish(
@@ -536,6 +544,76 @@ def resume_brain_api(brain_id: int) -> Any:
     except Exception:
         logger.exception('publish brain.resumed failed')
     return jsonify({'status': 'active', 'brain': _brain_view(db.get_brain(brain_id))})
+
+
+# ============================================================
+# 发现社区（Discovery Square）
+# ============================================================
+
+@app.route('/ainstein/api/discoveries', methods=['GET'])
+def list_discoveries_api() -> Any:
+    """公开发现列表，支持 hot/new/top 排序。"""
+    sort = (request.args.get('sort') or 'hot').strip()
+    if sort not in ('hot', 'new', 'top'):
+        sort = 'hot'
+    try:
+        limit = min(int(request.args.get('limit', 50)), 100)
+        offset = max(int(request.args.get('offset', 0)), 0)
+    except (TypeError, ValueError):
+        limit, offset = 50, 0
+    items = db.list_discoveries(sort=sort, limit=limit, offset=offset)
+    return jsonify({'items': items, 'sort': sort, 'limit': limit, 'offset': offset})
+
+
+@app.route('/ainstein/api/discoveries/<int:discovery_id>/like', methods=['POST'])
+@auth.require_auth
+def like_discovery_api(discovery_id: int) -> Any:
+    user_id = g.current_user['id']
+    try:
+        added = db.toggle_discovery_action(user_id, discovery_id, 'like')
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    db.add_tracking_event(
+        user_id, 'discovery.liked',
+        metadata={'discovery_id': discovery_id, 'added': added},
+    )
+    return jsonify({'status': 'ok', 'liked': added})
+
+
+@app.route('/ainstein/api/discoveries/<int:discovery_id>/save', methods=['POST'])
+@auth.require_auth
+def save_discovery_api(discovery_id: int) -> Any:
+    user_id = g.current_user['id']
+    try:
+        added = db.toggle_discovery_action(user_id, discovery_id, 'save')
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    db.add_tracking_event(
+        user_id, 'discovery.saved',
+        metadata={'discovery_id': discovery_id, 'added': added},
+    )
+    return jsonify({'status': 'ok', 'saved': added})
+
+
+@app.route('/ainstein/api/discoveries/mine', methods=['GET'])
+@auth.require_auth
+def my_discoveries_api() -> Any:
+    user_id = g.current_user['id']
+    try:
+        limit = min(int(request.args.get('limit', 50)), 100)
+        offset = max(int(request.args.get('offset', 0)), 0)
+    except (TypeError, ValueError):
+        limit, offset = 50, 0
+    items = db.get_user_saved_discoveries(user_id, limit=limit, offset=offset)
+    return jsonify({'items': items})
+
+
+@app.route('/ainstein/api/discoveries/actions', methods=['GET'])
+@auth.require_auth
+def my_discovery_actions_api() -> Any:
+    user_id = g.current_user['id']
+    actions = db.get_user_discovery_actions(user_id)
+    return jsonify({'actions': actions})
 
 
 # === Projects ===

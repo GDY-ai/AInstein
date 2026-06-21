@@ -3,6 +3,9 @@ import type {
   Brain,
   BrainFrontier,
   CreateBrainResponse,
+  Discovery,
+  DiscoveryAction,
+  DiscoverySort,
   KnowledgeGraph,
   ObserverLog,
   PaperShare,
@@ -207,6 +210,25 @@ export const api = {
     const res = await request(`/brains/${brainId}/thinking-summary`) as any;
     return res?.summary || null;
   },
+
+  // === 发现社区 ===
+  listDiscoveries: (sort: DiscoverySort = 'hot', limit = 50, offset = 0) => {
+    const qs = new URLSearchParams({ sort, limit: String(limit), offset: String(offset) });
+    return request(`/discoveries?${qs.toString()}`) as Promise<{
+      items: Discovery[];
+      sort: DiscoverySort;
+      limit: number;
+      offset: number;
+    }>;
+  },
+  likeDiscovery: (id: number) =>
+    request(`/discoveries/${id}/like`, { method: 'POST' }) as Promise<{ status: string; liked: boolean }>,
+  saveDiscovery: (id: number) =>
+    request(`/discoveries/${id}/save`, { method: 'POST' }) as Promise<{ status: string; saved: boolean }>,
+  myDiscoveries: () =>
+    request('/discoveries/mine') as Promise<{ items: Discovery[] }>,
+  myDiscoveryActions: () =>
+    request('/discoveries/actions') as Promise<{ actions: DiscoveryAction[] }>,
 };
 
 // 命名导出方便直接 import

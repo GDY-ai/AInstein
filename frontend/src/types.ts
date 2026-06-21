@@ -228,3 +228,27 @@ export interface PaperShare {
   title?: string;
   filename?: string;
 }
+
+// ===== 发现社区 =====
+
+export interface Discovery {
+  id: number;
+  brain_id: number;
+  ce_id: number;
+  title: string;
+  summary: string | null;
+  domain_tags: string | null;
+  likes_count: number;
+  saves_count: number;
+  is_featured: number;
+  created_at: string;
+  brain_name?: string | null;
+  seed_question?: string | null;
+}
+
+export type DiscoverySort = 'hot' | 'new' | 'top';
+
+export interface DiscoveryAction {
+  discovery_id: number;
+  action_type: 'like' | 'save';
+}

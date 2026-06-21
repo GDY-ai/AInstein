@@ -171,6 +171,14 @@ export default function BrainList() {
           </div>
         </div>
         <div style={navRightStyle}>
+          <button
+            onClick={() => navigate('/discoveries')}
+            style={discoveriesNavBtnStyle}
+            title="发现广场·让其他大脑的思考被你看见"
+          >
+            <span style={discoveriesNavDotStyle} />
+            <span style={{ letterSpacing: 2 }}>发现广场</span>
+          </button>
           {isAdmin && (
             <a
               href={`${(import.meta as any).env?.BASE_URL?.replace(/\/$/, '') ?? ''}/admin/bigscreen`}
@@ -887,6 +895,29 @@ const bigScreenArrowStyle: CSSProperties = {
   fontSize: 13,
   opacity: 0.7,
   transform: 'translateY(-1px)',
+}
+const discoveriesNavBtnStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 8,
+  background:
+    'linear-gradient(120deg, rgba(167,139,250,0.16) 0%, rgba(236,72,153,0.16) 100%)',
+  color: '#f5d0fe',
+  border: '1px solid rgba(167,139,250,0.45)',
+  borderRadius: 6,
+  padding: '6px 14px',
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: 'pointer',
+  textTransform: 'uppercase',
+  boxShadow: '0 4px 18px rgba(167,139,250,0.18)',
+}
+const discoveriesNavDotStyle: CSSProperties = {
+  width: 7,
+  height: 7,
+  borderRadius: '50%',
+  background: '#f0abfc',
+  boxShadow: '0 0 10px #f0abfc',
 }
 
 const contentStyle: CSSProperties = {
