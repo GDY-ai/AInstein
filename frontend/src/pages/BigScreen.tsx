@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { api } from '../api';
 import type { Brain } from '../types';
 import { BRAIN_OUTLINE, BRAIN_SULCI, CEREBELLUM_LINES } from './brain-data';
+import AdminNav from '../components/AdminNav';
 
 // ===================== 类型定义 =====================
 
@@ -497,19 +498,30 @@ export default function BigScreen() {
         </div>
       )}
 
+      <AdminNav
+        active="bigscreen"
+        floating
+        rightSlot={
+          <span style={{ letterSpacing: 2 }}>
+            <span style={{ color: '#4fd1c5' }}>● </span>
+            实时拓扑 · LIVE FEED
+          </span>
+        }
+      />
+
       <div style={{
-        position: 'absolute', top: 28, left: '50%', transform: 'translateX(-50%)',
-        color: 'rgba(220, 235, 255, 0.9)', fontSize: 18, fontWeight: 500,
+        position: 'absolute', top: 88, left: '50%', transform: 'translateX(-50%)',
+        color: 'rgba(220, 235, 255, 0.9)', fontSize: 16, fontWeight: 500,
         letterSpacing: 6,
         fontFamily: '"Inter", "Helvetica Neue", sans-serif',
         textShadow: '0 0 24px rgba(120, 180, 255, 0.45)',
         pointerEvents: 'none',
       }}>
-        AInstein · 硅基大脑态势全景
+        硅基大脑 · 态势全景
       </div>
 
       <div style={{
-        position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',
+        position: 'absolute', top: 116, left: '50%', transform: 'translateX(-50%)',
         width: 120, height: 1,
         background: 'linear-gradient(90deg, transparent, rgba(150,200,255,0.5), transparent)',
         pointerEvents: 'none',
@@ -548,7 +560,7 @@ export default function BigScreen() {
         fontFamily: '"JetBrains Mono", monospace', letterSpacing: 2,
         pointerEvents: 'none',
       }}>
-        TOPOLOGY · LIVE FEED
+        TOPOLOGY · LIVE FEED · 实时拓扑
       </div>
 
       {hoveredBrain && (
@@ -582,9 +594,9 @@ export default function BigScreen() {
             <span><span style={{ color: '#6a7a96' }}>状态</span> <b style={{ color: STATE_COLORS[hoveredBrain.state] || '#fff' }}>{hoveredBrain.state}</b></span>
             <span><span style={{ color: '#6a7a96' }}>类型</span> {hoveredBrain.brain_type || 'standalone'}</span>
             <span><span style={{ color: '#6a7a96' }}>思考</span> {hoveredBrain.think_count ?? 0}</span>
-            <span><span style={{ color: '#6a7a96' }}>CE</span> {hoveredBrain.ce_count ?? 0}</span>
-            <span><span style={{ color: '#6a7a96' }}>Agent</span> {hoveredBrain.agent_count ?? 0}</span>
-            <span><span style={{ color: '#6a7a96' }}>Owner</span> {hoveredBrain.owner_username || '—'}</span>
+            <span><span style={{ color: '#6a7a96' }}>认知元素</span> {hoveredBrain.ce_count ?? 0}</span>
+            <span><span style={{ color: '#6a7a96' }}>智能体</span> {hoveredBrain.agent_count ?? 0}</span>
+            <span><span style={{ color: '#6a7a96' }}>归属</span> {hoveredBrain.owner_username || '—'}</span>
           </div>
           <div style={{ marginTop: 8, color: '#5a6a86', fontSize: 10 }}>
             创建于 {hoveredBrain.created_at?.slice(0, 16).replace('T', ' ')}

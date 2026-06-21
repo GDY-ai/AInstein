@@ -3,17 +3,17 @@ import { useNavigate } from 'react-router-dom'
 import { api, getStoredUser, getToken } from '../api'
 import type { Discovery, DiscoverySort, User } from '../types'
 import { track } from '../tracking'
+import AdminNav from '../components/AdminNav'
 
 /* ============================================================
- * 「认知裂隙 · COGNITIVE RIFTS」
- *  — 一座由已逝/收敛大脑馈赠的发现广场。
- *  每张卡片是一段从硅基意识海中冒出的"信号残响"。
+ * 「发现广场 · DISCOVERY」
+ *  深空科技风：青蓝主调，每张卡片是一颗已收敛大脑馈赠的认知信号。
  * ============================================================ */
 
 const SORT_OPTIONS: { key: DiscoverySort; label: string; sub: string }[] = [
-  { key: 'hot', label: '热门', sub: 'HOT · WEIGHTED' },
-  { key: 'new', label: '最新', sub: 'NEW · CHRONO' },
-  { key: 'top', label: '最佳', sub: 'TOP · LIKED' },
+  { key: 'hot', label: '热门', sub: 'HOT' },
+  { key: 'new', label: '最新', sub: 'NEW' },
+  { key: 'top', label: '最佳', sub: 'TOP' },
 ]
 
 interface ActionMap {
@@ -30,12 +30,19 @@ function injectFonts() {
   link.id = FONT_INJECT_ID
   link.rel = 'stylesheet'
   link.href =
-    'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500;700&display=swap'
+    'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap'
   document.head.appendChild(link)
 }
 
-const FONT_DISPLAY = '"Cormorant Garamond", "Times New Roman", Georgia, serif'
+const FONT_BODY =
+  '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif'
 const FONT_MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
+
+const ACCENT = '#4fd1c5'
+const ACCENT_2 = '#63b3ed'
+const TEXT = '#dce6f5'
+const DIM = '#7a8da8'
+const FAINT = '#475569'
 
 export default function Discoveries() {
   const navigate = useNavigate()
@@ -150,70 +157,61 @@ export default function Discoveries() {
     [items]
   )
 
+  const todayStr = new Date().toISOString().slice(0, 10)
+
   return (
     <div style={pageStyle}>
       <StyleTag />
       <div style={gridBg} />
       <div style={vignetteStyle} />
-      <div style={crossLineH} />
-      <div style={crossLineV} />
 
-      {/* ===== 顶部条 ===== */}
-      <header style={topBarStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <button
-            onClick={() => navigate(isAuthed ? '/brains' : '/login')}
-            style={crumbBtnStyle}
-            title="返回大脑列表"
-          >
-            ← AINSTEIN
-          </button>
-          <span style={{ color: '#475569', fontFamily: FONT_MONO, fontSize: 11 }}>
-            ／ DISCOVERY · /rifts
-          </span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {user ? (
-            <span style={pillStyle}>
-              <span style={{ color: '#94a3b8' }}>OBSERVER</span>{' '}
-              <span style={{ color: '#e2e8f0' }}>{user.username}</span>
+      <AdminNav
+        active="discoveries"
+        rightSlot={
+          user ? (
+            <span style={{ letterSpacing: 1 }}>
+              <span style={{ color: FAINT }}>观察者</span>{' '}
+              <span style={{ color: TEXT }}>{user.username}</span>
             </span>
           ) : (
-            <button onClick={() => navigate('/login')} style={crumbBtnStyle}>
+            <button onClick={() => navigate('/login')} style={loginBtnStyle}>
               登录后参与
             </button>
-          )}
-        </div>
-      </header>
+          )
+        }
+      />
 
       {/* ===== 巨幅刊头 ===== */}
       <section style={mastheadStyle}>
         <div style={editionTagStyle}>
           <span style={editionDot} />
-          <span>EDITION · {new Date().toISOString().slice(0, 10)}</span>
+          <span>EDITION · {todayStr}</span>
           <span style={{ opacity: 0.4 }}>//</span>
           <span>VOL.01</span>
         </div>
         <h1 style={mastheadTitleStyle}>
-          <span style={{ display: 'block', color: '#cbd5e1', fontWeight: 400, fontStyle: 'italic' }}>
-            From the deceased minds of silicon —
+          <span style={{ display: 'block', color: DIM, fontWeight: 300, fontSize: '0.42em', letterSpacing: 4, marginBottom: 14 }}>
+            来自已停止思考的硅基意识海
           </span>
-          <span style={accentTitleStyle}>认知裂隙</span>
-          <span style={{ color: '#475569', margin: '0 14px', fontWeight: 300 }}>·</span>
-          <span style={{ color: '#a78bfa' }}>Cognitive Rifts</span>
+          <span style={accentTitleStyle}>发现广场</span>
+          <span style={{ color: FAINT, margin: '0 18px', fontWeight: 200 }}>·</span>
+          <span style={{ color: ACCENT_2, fontFamily: FONT_MONO, fontSize: '0.55em', letterSpacing: 4 }}>
+            DISCOVERY
+          </span>
         </h1>
         <p style={mastheadKickerStyle}>
-          每一条信号都来自一颗已经停止思考的硅基大脑——它们的最后一句话，被这片广场温柔收纳。
+          每一条信号都来自一颗已经收敛思考的硅基大脑——它们的最后一句话，被这片广场温柔收纳。
           <br />
           点亮一颗心，是给思想者的回响；收藏一段话，是把它带回你自己的轨道。
         </p>
         <div style={mastheadStatsStyle}>
-          <BigStat label="ACTIVE FEED" value={headlineCount} accent="#a78bfa" />
-          <BigStat label="TOTAL SIGNAL" value={totalSignal} accent="#22d3ee" />
+          <BigStat label="活跃信号" sub="ACTIVE FEED" value={headlineCount} accent={ACCENT} />
+          <BigStat label="累计回响" sub="TOTAL ECHO" value={totalSignal} accent={ACCENT_2} />
           <BigStat
-            label="MY LIBRARY"
+            label="我的收藏"
+            sub="MY LIBRARY"
             value={actions.saved.size}
-            accent="#ec4899"
+            accent="#f6c179"
             disabled={!isAuthed}
           />
         </div>
@@ -221,7 +219,7 @@ export default function Discoveries() {
 
       {/* ===== 排序栏 ===== */}
       <nav style={sortBarStyle}>
-        <span style={sortLabelStyle}>FILTER ↘</span>
+        <span style={sortLabelStyle}>筛选 ↘ FILTER</span>
         <div style={sortGroupStyle}>
           {SORT_OPTIONS.map((opt) => {
             const active = sort === opt.key
@@ -231,21 +229,21 @@ export default function Discoveries() {
                 onClick={() => setSort(opt.key)}
                 style={{
                   ...sortBtnStyle,
-                  color: active ? '#0f1117' : '#cbd5e1',
+                  color: active ? '#0a0e1a' : DIM,
                   background: active
-                    ? 'linear-gradient(120deg, #fde68a 0%, #f0abfc 50%, #a5f3fc 100%)'
+                    ? `linear-gradient(120deg, ${ACCENT} 0%, ${ACCENT_2} 100%)`
                     : 'transparent',
-                  borderColor: active ? 'transparent' : 'rgba(148,163,184,0.25)',
-                  boxShadow: active ? '0 6px 20px rgba(240,171,252,0.25)' : 'none',
+                  borderColor: active ? 'transparent' : 'rgba(120, 160, 220, 0.18)',
+                  boxShadow: active ? `0 6px 20px ${ACCENT}33` : 'none',
                 }}
               >
-                <span style={{ fontSize: 14, fontWeight: 700 }}>{opt.label}</span>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{opt.label}</span>
                 <span
                   style={{
                     fontSize: 9,
                     letterSpacing: 2,
                     fontFamily: FONT_MONO,
-                    opacity: active ? 0.7 : 0.55,
+                    opacity: active ? 0.75 : 0.55,
                     marginLeft: 8,
                   }}
                 >
@@ -260,11 +258,11 @@ export default function Discoveries() {
           style={{
             fontFamily: FONT_MONO,
             fontSize: 10,
-            color: '#475569',
+            color: FAINT,
             letterSpacing: 2,
           }}
         >
-          {loading ? 'BUFFERING ⋯' : `${headlineCount} TRANSMISSIONS`}
+          {loading ? '加载中 ⋯' : `${headlineCount} 条信号 · TRANSMISSIONS`}
         </span>
       </nav>
 
@@ -294,8 +292,8 @@ export default function Discoveries() {
       </main>
 
       <footer style={footerStyle}>
-        <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: '#475569', letterSpacing: 3 }}>
-          // EOF · TRANSMISSION END · STAY CURIOUS
+        <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: FAINT, letterSpacing: 3 }}>
+          // 信号传输完毕 · STAY CURIOUS
         </span>
       </footer>
     </div>
@@ -306,11 +304,13 @@ export default function Discoveries() {
 
 function BigStat({
   label,
+  sub,
   value,
   accent,
   disabled,
 }: {
   label: string
+  sub: string
   value: number
   accent: string
   disabled?: boolean
@@ -320,7 +320,7 @@ function BigStat({
       style={{
         ...bigStatStyle,
         opacity: disabled ? 0.4 : 1,
-        borderColor: accent + '33',
+        borderColor: accent + '44',
       }}
     >
       <div
@@ -329,23 +329,26 @@ function BigStat({
           fontSize: 10,
           letterSpacing: 3,
           color: accent,
-          fontWeight: 700,
+          fontWeight: 600,
         }}
       >
-        {label}
+        {sub}
       </div>
       <div
         style={{
-          fontFamily: FONT_DISPLAY,
-          fontSize: 38,
-          color: '#f1f5f9',
-          fontWeight: 600,
+          fontFamily: FONT_MONO,
+          fontSize: 36,
+          color: TEXT,
+          fontWeight: 500,
           lineHeight: 1,
-          marginTop: 6,
+          marginTop: 8,
+          letterSpacing: -1,
+          textShadow: `0 0 18px ${accent}33`,
         }}
       >
         {value.toLocaleString()}
       </div>
+      <div style={{ fontSize: 11, color: DIM, marginTop: 6, letterSpacing: 1 }}>{label}</div>
     </div>
   )
 }
@@ -355,13 +358,13 @@ function SkeletonList() {
     <>
       {[0, 1, 2, 3].map((i) => (
         <div key={i} style={{ ...cardWrapStyle, opacity: 0.5 }}>
-          <div style={{ height: 18, background: '#1e2230', width: '40%', marginBottom: 14 }} />
+          <div style={{ height: 18, background: 'rgba(120,160,220,0.08)', width: '40%', marginBottom: 14 }} />
           <div
-            style={{ height: 32, background: '#1e2230', width: '80%', marginBottom: 18 }}
+            style={{ height: 28, background: 'rgba(120,160,220,0.08)', width: '80%', marginBottom: 18 }}
           />
-          <div style={{ height: 12, background: '#1a1d27', width: '100%', marginBottom: 6 }} />
-          <div style={{ height: 12, background: '#1a1d27', width: '95%', marginBottom: 6 }} />
-          <div style={{ height: 12, background: '#1a1d27', width: '70%' }} />
+          <div style={{ height: 12, background: 'rgba(120,160,220,0.05)', width: '100%', marginBottom: 6 }} />
+          <div style={{ height: 12, background: 'rgba(120,160,220,0.05)', width: '95%', marginBottom: 6 }} />
+          <div style={{ height: 12, background: 'rgba(120,160,220,0.05)', width: '70%' }} />
         </div>
       ))}
     </>
@@ -373,17 +376,16 @@ function EmptyState() {
     <div style={emptyStyle}>
       <div
         style={{
-          fontFamily: FONT_DISPLAY,
-          fontSize: 28,
-          fontStyle: 'italic',
-          color: '#94a3b8',
-          marginBottom: 6,
+          fontSize: 22,
+          color: DIM,
+          marginBottom: 8,
+          letterSpacing: 4,
         }}
       >
-        信号沉寂。
+        信号沉寂
       </div>
-      <div style={{ color: '#64748b', fontSize: 13, fontFamily: FONT_MONO, letterSpacing: 1 }}>
-        // NO TRANSMISSIONS YET — 等待第一个大脑思考收敛。
+      <div style={{ color: FAINT, fontSize: 12, fontFamily: FONT_MONO, letterSpacing: 1 }}>
+        // 暂无信号 · 等待第一颗大脑思考收敛
       </div>
     </div>
   )
@@ -408,7 +410,6 @@ function DiscoveryCard({
   onSave: () => void
   onOpenBrain: () => void
 }) {
-  // 解析 domain_tags（可能是 JSON 数组 或 逗号串 或 null）
   const tags = useMemo(() => parseTags(d.domain_tags), [d.domain_tags])
   const heat = d.likes_count + d.saves_count
   const isHot = heat >= 5
@@ -423,14 +424,14 @@ function DiscoveryCard({
       }}
       className="ainstein-discovery-card"
     >
-      {d.is_featured ? <span style={featuredRibbonStyle}>★ FEATURED</span> : null}
+      {d.is_featured ? <span style={featuredRibbonStyle}>★ 精选</span> : null}
 
       <div style={cardMetaRow}>
         <span style={stampStyle}>
           <span style={stampDot} />
           {stamp}
         </span>
-        <span style={{ color: '#475569', fontFamily: FONT_MONO, fontSize: 10, letterSpacing: 2 }}>
+        <span style={{ color: FAINT, fontFamily: FONT_MONO, fontSize: 10, letterSpacing: 2 }}>
           {dateStr}
         </span>
       </div>
@@ -438,7 +439,7 @@ function DiscoveryCard({
       <h2
         style={{
           ...cardTitleStyle,
-          textShadow: isHot ? '0 0 22px rgba(167,139,250,0.18)' : 'none',
+          textShadow: isHot ? `0 0 22px ${ACCENT}33` : 'none',
         }}
       >
         {d.title}
@@ -452,7 +453,6 @@ function DiscoveryCard({
         </p>
       )}
 
-      {/* tags */}
       {tags.length > 0 && (
         <div style={tagRowStyle}>
           {tags.slice(0, 5).map((t) => (
@@ -464,15 +464,15 @@ function DiscoveryCard({
       )}
 
       <div style={cardSourceStyle}>
-        <span style={{ color: '#64748b', fontFamily: FONT_MONO, fontSize: 10, letterSpacing: 2 }}>
-          ORIGIN ·
+        <span style={{ color: FAINT, fontFamily: FONT_MONO, fontSize: 10, letterSpacing: 2 }}>
+          来源 · ORIGIN
         </span>
         <button
           onClick={onOpenBrain}
           style={originBtnStyle}
           title="打开来源大脑"
         >
-          🧠 {d.brain_name || `Brain #${d.brain_id}`}
+          🧠 {d.brain_name || `大脑 #${d.brain_id}`}
         </button>
         {d.seed_question && (
           <span style={seedSnippetStyle} title={d.seed_question}>
@@ -487,8 +487,8 @@ function DiscoveryCard({
           disabled={busy}
           style={{
             ...actionBtnStyle,
-            color: liked ? '#fb7185' : '#94a3b8',
-            borderColor: liked ? '#fb718577' : 'rgba(148,163,184,0.18)',
+            color: liked ? '#fb7185' : DIM,
+            borderColor: liked ? '#fb718577' : 'rgba(120, 160, 220, 0.18)',
             background: liked ? 'rgba(251,113,133,0.07)' : 'transparent',
           }}
         >
@@ -500,9 +500,9 @@ function DiscoveryCard({
           disabled={busy}
           style={{
             ...actionBtnStyle,
-            color: saved ? '#fde68a' : '#94a3b8',
-            borderColor: saved ? '#fde68a88' : 'rgba(148,163,184,0.18)',
-            background: saved ? 'rgba(253,230,138,0.07)' : 'transparent',
+            color: saved ? '#f6c179' : DIM,
+            borderColor: saved ? '#f6c17988' : 'rgba(120, 160, 220, 0.18)',
+            background: saved ? 'rgba(246,193,121,0.07)' : 'transparent',
           }}
         >
           <span style={{ fontSize: 16 }}>{saved ? '★' : '☆'}</span>
@@ -513,14 +513,14 @@ function DiscoveryCard({
           style={{
             fontFamily: FONT_MONO,
             fontSize: 10,
-            color: isHot ? '#a78bfa' : '#475569',
+            color: isHot ? ACCENT : FAINT,
             letterSpacing: 2,
             display: 'inline-flex',
             alignItems: 'center',
             gap: 6,
           }}
         >
-          {isHot && <span style={hotPulseStyle} />} HEAT · {heat}
+          {isHot && <span style={hotPulseStyle} />} 热度 · {heat}
         </span>
       </div>
     </article>
@@ -553,10 +553,10 @@ const pageStyle: CSSProperties = {
   minHeight: '100vh',
   position: 'relative',
   overflow: 'hidden',
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  fontFamily: FONT_BODY,
   background:
-    'radial-gradient(ellipse at top, #15172a 0%, #0a0c14 55%, #050608 100%)',
-  color: '#e4e6ed',
+    'radial-gradient(ellipse at top, #0f1729 0%, #0a0e1a 55%, #050810 100%)',
+  color: TEXT,
 }
 
 const gridBg: CSSProperties = {
@@ -564,7 +564,7 @@ const gridBg: CSSProperties = {
   inset: 0,
   pointerEvents: 'none',
   backgroundImage:
-    'linear-gradient(rgba(167,139,250,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(167,139,250,0.05) 1px, transparent 1px)',
+    `linear-gradient(rgba(79,209,197,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(79,209,197,0.05) 1px, transparent 1px)`,
   backgroundSize: '64px 64px',
   maskImage: 'radial-gradient(ellipse at top, #000 5%, transparent 75%)',
   WebkitMaskImage: 'radial-gradient(ellipse at top, #000 5%, transparent 75%)',
@@ -575,61 +575,20 @@ const vignetteStyle: CSSProperties = {
   inset: 0,
   pointerEvents: 'none',
   background:
-    'radial-gradient(circle at 18% 12%, rgba(167,139,250,0.18) 0%, transparent 35%), radial-gradient(circle at 82% 88%, rgba(34,211,238,0.10) 0%, transparent 40%), radial-gradient(circle at 50% 60%, rgba(236,72,153,0.06) 0%, transparent 45%)',
+    'radial-gradient(circle at 18% 12%, rgba(79,209,197,0.10) 0%, transparent 35%), radial-gradient(circle at 82% 88%, rgba(99,179,237,0.08) 0%, transparent 40%)',
   zIndex: 0,
-}
-const crossLineH: CSSProperties = {
-  position: 'absolute',
-  left: 0,
-  right: 0,
-  top: 96,
-  height: 1,
-  background: 'linear-gradient(90deg, transparent, rgba(167,139,250,0.25) 18%, rgba(167,139,250,0.25) 82%, transparent)',
-  zIndex: 0,
-  pointerEvents: 'none',
-}
-const crossLineV: CSSProperties = {
-  position: 'absolute',
-  top: 0,
-  bottom: 0,
-  left: '50%',
-  width: 1,
-  background:
-    'linear-gradient(180deg, transparent, rgba(148,163,184,0.05) 30%, rgba(148,163,184,0.05) 70%, transparent)',
-  zIndex: 0,
-  pointerEvents: 'none',
 }
 
-const topBarStyle: CSSProperties = {
-  position: 'relative',
-  zIndex: 2,
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  padding: '20px 48px',
-  borderBottom: '1px solid rgba(148,163,184,0.08)',
-  background: 'rgba(10,12,20,0.5)',
-  backdropFilter: 'blur(10px)',
-}
-const crumbBtnStyle: CSSProperties = {
+const loginBtnStyle: CSSProperties = {
   background: 'transparent',
-  color: '#cbd5e1',
-  border: '1px solid rgba(148,163,184,0.18)',
-  borderRadius: 6,
+  color: TEXT,
+  border: '1px solid rgba(79, 209, 197, 0.4)',
+  borderRadius: 4,
   padding: '6px 14px',
   fontSize: 12,
-  fontFamily: FONT_MONO,
-  letterSpacing: 2,
-  cursor: 'pointer',
-}
-const pillStyle: CSSProperties = {
-  fontSize: 12,
-  fontFamily: FONT_MONO,
+  fontFamily: FONT_BODY,
   letterSpacing: 1,
-  padding: '6px 12px',
-  background: 'rgba(20,22,34,0.7)',
-  border: '1px solid rgba(148,163,184,0.18)',
-  borderRadius: 999,
+  cursor: 'pointer',
 }
 
 const mastheadStyle: CSSProperties = {
@@ -646,41 +605,40 @@ const editionTagStyle: CSSProperties = {
   fontFamily: FONT_MONO,
   fontSize: 11,
   letterSpacing: 3,
-  color: '#a78bfa',
+  color: ACCENT,
   marginBottom: 22,
 }
 const editionDot: CSSProperties = {
   width: 7,
   height: 7,
   borderRadius: '50%',
-  background: '#a78bfa',
-  boxShadow: '0 0 10px #a78bfa',
+  background: ACCENT,
+  boxShadow: `0 0 10px ${ACCENT}`,
 }
 const mastheadTitleStyle: CSSProperties = {
-  fontFamily: FONT_DISPLAY,
-  fontSize: 'clamp(48px, 7vw, 96px)',
-  lineHeight: 0.95,
+  fontFamily: FONT_BODY,
+  fontSize: 'clamp(48px, 7vw, 88px)',
+  lineHeight: 1.05,
   margin: 0,
   fontWeight: 600,
-  color: '#f1f5f9',
-  letterSpacing: -1,
+  color: TEXT,
+  letterSpacing: 4,
 }
 const accentTitleStyle: CSSProperties = {
-  background: 'linear-gradient(110deg, #fde68a 0%, #f0abfc 45%, #a5f3fc 100%)',
+  background: `linear-gradient(110deg, ${ACCENT} 0%, ${ACCENT_2} 100%)`,
   WebkitBackgroundClip: 'text',
   WebkitTextFillColor: 'transparent',
   backgroundClip: 'text',
-  fontStyle: 'italic',
   fontWeight: 700,
 }
 const mastheadKickerStyle: CSSProperties = {
   marginTop: 22,
-  fontFamily: FONT_DISPLAY,
-  fontStyle: 'italic',
-  fontSize: 18,
-  color: '#94a3b8',
-  lineHeight: 1.7,
+  fontFamily: FONT_BODY,
+  fontSize: 15,
+  color: DIM,
+  lineHeight: 1.85,
   maxWidth: 720,
+  letterSpacing: 0.5,
 }
 const mastheadStatsStyle: CSSProperties = {
   marginTop: 32,
@@ -690,11 +648,11 @@ const mastheadStatsStyle: CSSProperties = {
 }
 const bigStatStyle: CSSProperties = {
   border: '1px solid',
-  borderRadius: 10,
+  borderRadius: 6,
   padding: '14px 22px',
-  background: 'rgba(15,17,30,0.65)',
-  backdropFilter: 'blur(8px)',
-  minWidth: 150,
+  background: 'rgba(15, 22, 38, 0.6)',
+  backdropFilter: 'blur(10px)',
+  minWidth: 160,
 }
 
 const sortBarStyle: CSSProperties = {
@@ -707,17 +665,17 @@ const sortBarStyle: CSSProperties = {
   maxWidth: 1240,
   margin: '0 auto',
   padding: '18px 48px',
-  borderTop: '1px solid rgba(148,163,184,0.08)',
-  borderBottom: '1px solid rgba(148,163,184,0.08)',
-  background: 'rgba(8,10,18,0.85)',
+  borderTop: '1px solid rgba(120, 160, 220, 0.1)',
+  borderBottom: '1px solid rgba(120, 160, 220, 0.1)',
+  background: 'rgba(8, 12, 22, 0.85)',
   backdropFilter: 'blur(12px)',
 }
 const sortLabelStyle: CSSProperties = {
   fontFamily: FONT_MONO,
   fontSize: 10,
   letterSpacing: 3,
-  color: '#64748b',
-  fontWeight: 700,
+  color: FAINT,
+  fontWeight: 600,
 }
 const sortGroupStyle: CSSProperties = {
   display: 'inline-flex',
@@ -725,8 +683,8 @@ const sortGroupStyle: CSSProperties = {
   gap: 8,
   padding: 4,
   borderRadius: 999,
-  background: 'rgba(15,17,30,0.6)',
-  border: '1px solid rgba(148,163,184,0.12)',
+  background: 'rgba(15, 22, 38, 0.55)',
+  border: '1px solid rgba(120, 160, 220, 0.12)',
 }
 const sortBtnStyle: CSSProperties = {
   border: '1px solid',
@@ -746,7 +704,7 @@ const errorBoxStyle: CSSProperties = {
   background: 'rgba(239,68,68,0.1)',
   border: '1px solid rgba(239,68,68,0.3)',
   color: '#fca5a5',
-  borderRadius: 8,
+  borderRadius: 6,
   fontSize: 13,
 }
 
@@ -758,16 +716,16 @@ const feedStyle: CSSProperties = {
   padding: '0 48px 80px',
   display: 'grid',
   gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))',
-  gap: 24,
+  gap: 22,
 }
 
 const cardWrapStyle: CSSProperties = {
   position: 'relative',
   background:
-    'linear-gradient(160deg, rgba(20,22,34,0.85) 0%, rgba(13,15,24,0.85) 100%)',
-  border: '1px solid rgba(148,163,184,0.12)',
-  borderRadius: 14,
-  padding: '22px 24px 18px',
+    'linear-gradient(160deg, rgba(15, 22, 38, 0.85) 0%, rgba(10, 14, 26, 0.85) 100%)',
+  border: '1px solid rgba(120, 160, 220, 0.15)',
+  borderRadius: 8,
+  padding: '20px 22px 16px',
   display: 'flex',
   flexDirection: 'column',
   gap: 12,
@@ -778,14 +736,14 @@ const cardWrapStyle: CSSProperties = {
 const featuredRibbonStyle: CSSProperties = {
   position: 'absolute',
   top: 14,
-  right: -32,
+  right: -36,
   transform: 'rotate(35deg)',
-  background: 'linear-gradient(90deg, #fde68a, #f0abfc)',
-  color: '#0f1117',
-  padding: '4px 40px',
-  fontFamily: FONT_MONO,
-  fontSize: 9,
-  letterSpacing: 2,
+  background: `linear-gradient(90deg, ${ACCENT}, ${ACCENT_2})`,
+  color: '#0a0e1a',
+  padding: '4px 44px',
+  fontFamily: FONT_BODY,
+  fontSize: 10,
+  letterSpacing: 3,
   fontWeight: 700,
 }
 const cardMetaRow: CSSProperties = {
@@ -800,39 +758,39 @@ const stampStyle: CSSProperties = {
   fontFamily: FONT_MONO,
   fontSize: 10,
   letterSpacing: 3,
-  color: '#a78bfa',
-  fontWeight: 700,
+  color: ACCENT,
+  fontWeight: 600,
 }
 const stampDot: CSSProperties = {
   width: 6,
   height: 6,
   borderRadius: '50%',
-  background: '#a78bfa',
-  boxShadow: '0 0 8px #a78bfa',
+  background: ACCENT,
+  boxShadow: `0 0 8px ${ACCENT}`,
 }
 const cardTitleStyle: CSSProperties = {
-  fontFamily: FONT_DISPLAY,
-  fontSize: 24,
+  fontFamily: FONT_BODY,
+  fontSize: 20,
   fontWeight: 600,
-  lineHeight: 1.25,
-  color: '#f1f5f9',
+  lineHeight: 1.3,
+  color: '#f0f6ff',
   margin: 0,
-  letterSpacing: -0.2,
+  letterSpacing: 0.5,
   display: '-webkit-box',
   WebkitLineClamp: 3,
   WebkitBoxOrient: 'vertical',
   overflow: 'hidden',
 }
 const cardSummaryStyle: CSSProperties = {
-  fontSize: 13.5,
-  lineHeight: 1.7,
-  color: '#94a3b8',
+  fontSize: 13,
+  lineHeight: 1.75,
+  color: DIM,
   margin: 0,
   display: '-webkit-box',
   WebkitLineClamp: 4,
   WebkitBoxOrient: 'vertical',
   overflow: 'hidden',
-  borderLeft: '2px solid rgba(167,139,250,0.4)',
+  borderLeft: `2px solid ${ACCENT}66`,
   paddingLeft: 12,
 }
 const tagRowStyle: CSSProperties = {
@@ -845,10 +803,10 @@ const tagChipStyle: CSSProperties = {
   fontFamily: FONT_MONO,
   fontSize: 10,
   letterSpacing: 1,
-  color: '#a5f3fc',
-  background: 'rgba(34,211,238,0.06)',
-  border: '1px solid rgba(34,211,238,0.22)',
-  borderRadius: 4,
+  color: ACCENT,
+  background: 'rgba(79, 209, 197, 0.06)',
+  border: '1px solid rgba(79, 209, 197, 0.22)',
+  borderRadius: 3,
   padding: '2px 8px',
 }
 const cardSourceStyle: CSSProperties = {
@@ -857,22 +815,22 @@ const cardSourceStyle: CSSProperties = {
   gap: 8,
   flexWrap: 'wrap',
   paddingTop: 12,
-  borderTop: '1px dashed rgba(148,163,184,0.15)',
+  borderTop: '1px dashed rgba(120, 160, 220, 0.15)',
 }
 const originBtnStyle: CSSProperties = {
   background: 'transparent',
   border: 'none',
   padding: 0,
-  color: '#cbd5e1',
+  color: TEXT,
   fontSize: 13,
   cursor: 'pointer',
   textDecoration: 'underline',
-  textDecorationColor: 'rgba(167,139,250,0.4)',
+  textDecorationColor: `${ACCENT}66`,
   textUnderlineOffset: 4,
+  fontFamily: FONT_BODY,
 }
 const seedSnippetStyle: CSSProperties = {
-  color: '#64748b',
-  fontFamily: FONT_DISPLAY,
+  color: FAINT,
   fontStyle: 'italic',
   fontSize: 13,
   flex: 1,
@@ -898,25 +856,26 @@ const actionBtnStyle: CSSProperties = {
   fontSize: 13,
   cursor: 'pointer',
   transition: 'all .2s ease',
+  fontFamily: FONT_BODY,
 }
 const hotPulseStyle: CSSProperties = {
   width: 7,
   height: 7,
   borderRadius: '50%',
-  background: '#a78bfa',
-  boxShadow: '0 0 8px #a78bfa',
+  background: ACCENT,
+  boxShadow: `0 0 8px ${ACCENT}`,
   display: 'inline-block',
-  animation: 'bigscreen-pulse 1.6s ease-in-out infinite',
+  animation: 'ainstein-pulse 1.6s ease-in-out infinite',
 }
 
 const emptyStyle: CSSProperties = {
   gridColumn: '1 / -1',
   textAlign: 'center',
   padding: '120px 24px',
-  border: '1px dashed rgba(148,163,184,0.18)',
-  borderRadius: 16,
+  border: '1px dashed rgba(120, 160, 220, 0.18)',
+  borderRadius: 8,
   background:
-    'radial-gradient(ellipse at center, rgba(167,139,250,0.06) 0%, transparent 65%)',
+    'radial-gradient(ellipse at center, rgba(79,209,197,0.05) 0%, transparent 65%)',
 }
 const footerStyle: CSSProperties = {
   position: 'relative',
@@ -930,16 +889,24 @@ const footerStyle: CSSProperties = {
 function StyleTag() {
   return (
     <style>{`
+      @keyframes ainstein-fade-in {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes ainstein-pulse {
+        0%, 100% { opacity: 0.5; }
+        50% { opacity: 1; }
+      }
       .ainstein-discovery-card:hover {
         transform: translateY(-3px);
-        border-color: rgba(167,139,250,0.45) !important;
-        box-shadow: 0 18px 40px rgba(99,102,241,0.18), 0 0 0 1px rgba(167,139,250,0.15);
+        border-color: rgba(79, 209, 197, 0.4) !important;
+        box-shadow: 0 18px 40px rgba(15, 22, 38, 0.5), 0 0 0 1px rgba(79, 209, 197, 0.15);
       }
       .ainstein-discovery-card::before {
         content: '';
         position: absolute;
         inset: 0;
-        background: radial-gradient(circle at 100% 0%, rgba(167,139,250,0.10) 0%, transparent 45%);
+        background: radial-gradient(circle at 100% 0%, rgba(79, 209, 197, 0.08) 0%, transparent 45%);
         pointer-events: none;
       }
     `}</style>

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, getStoredUser } from '../api'
+import AdminNav from '../components/AdminNav'
 
 /* ============================================================
  * 「指挥舱 · OPERATIONS DECK」
@@ -17,28 +18,28 @@ function injectFonts() {
   link.id = FONT_INJECT_ID
   link.rel = 'stylesheet'
   link.href =
-    'https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=Space+Grotesk:wght@300;400;500;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap'
+    'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap'
   document.head.appendChild(link)
 }
-const FONT_DISPLAY = '"Major Mono Display", "JetBrains Mono", ui-monospace, monospace'
-const FONT_BODY = '"Space Grotesk", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif'
+const FONT_DISPLAY = '"JetBrains Mono", ui-monospace, monospace'
+const FONT_BODY = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif'
 const FONT_MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
 
 // ---------- 配色 ----------
 const COLORS = {
-  bg0: '#05070d',
-  bg1: '#0a0e18',
-  panel: 'rgba(15, 21, 33, 0.78)',
-  panelAlt: 'rgba(20, 28, 42, 0.55)',
-  border: 'rgba(123, 227, 211, 0.12)',
-  borderHot: 'rgba(246, 193, 121, 0.35)',
-  text: '#dfe7f3',
-  textDim: '#7d899e',
+  bg0: '#05070f',
+  bg1: '#0a0e1a',
+  panel: 'rgba(15, 22, 38, 0.72)',
+  panelAlt: 'rgba(20, 28, 46, 0.5)',
+  border: 'rgba(120, 160, 220, 0.15)',
+  borderHot: 'rgba(79, 209, 197, 0.35)',
+  text: '#dce6f5',
+  textDim: '#7a8da8',
   textFaint: '#475569',
-  cyan: '#7be3d3',
+  cyan: '#4fd1c5',
   amber: '#f6c179',
   pink: '#f687b3',
-  blue: '#7aa3d6',
+  blue: '#63b3ed',
   violet: '#a78bfa',
   rose: '#fb7185',
 }
@@ -128,33 +129,26 @@ export default function AdminDashboard() {
       <div style={vignette} />
       <div style={scanlines} />
 
-      {/* 顶部指挥栏 */}
-      <header style={topBarStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <button onClick={() => navigate('/brains')} style={crumbBtnStyle}>
-            ← BRAINS
-          </button>
-          <span style={topDividerStyle} />
-          <span style={topTagStyle}>
-            <span style={topDotStyle} />
-            OPERATIONS DECK · v01
+      {/* 顶部统一导航 */}
+      <AdminNav
+        active="dashboard"
+        rightSlot={
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ color: COLORS.cyan, letterSpacing: 1.5 }}>{formatClock(now)}</span>
+            <span style={{ color: COLORS.textDim }}>·</span>
+            <span style={{ letterSpacing: 1 }}>
+              <span style={{ color: COLORS.textFaint }}>操作员 </span>
+              <span style={{ color: COLORS.text }}>{user?.username || '未知'}</span>{' '}
+              <span style={{ color: COLORS.amber }}>[{(user?.role || 'user').toUpperCase()}]</span>
+            </span>
           </span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span style={topClockStyle}>{formatClock(now)}</span>
-          <span style={topDividerStyle} />
-          <span style={topUserStyle}>
-            <span style={{ color: COLORS.textDim }}>OPR ·</span>{' '}
-            <span style={{ color: COLORS.text }}>{user?.username || 'unknown'}</span>{' '}
-            <span style={{ color: COLORS.amber }}>[{(user?.role || 'user').toUpperCase()}]</span>
-          </span>
-        </div>
-      </header>
+        }
+      />
 
       {/* 错误条 */}
       {error && (
         <div style={errorBarStyle}>
-          <span style={{ color: COLORS.rose, marginRight: 12 }}>◆ ERROR</span>
+          <span style={{ color: COLORS.rose, marginRight: 12 }}>◆ 错误</span>
           {error}
         </div>
       )}
@@ -175,9 +169,9 @@ export default function AdminDashboard() {
       </div>
 
       <footer style={footerStyle}>
-        <span style={{ color: COLORS.textFaint }}>—— END OF TRANSMISSION ——</span>
+        <span style={{ color: COLORS.textFaint }}>—— 数据流结束 ——</span>
         <span style={{ color: COLORS.textFaint, fontFamily: FONT_MONO, fontSize: 11 }}>
-          AINSTEIN · OPERATIONS · {now.toISOString().slice(0, 10)}
+          AInstein · 运营仪表盘 · {now.toISOString().slice(0, 10)}
         </span>
       </footer>
     </div>
@@ -197,7 +191,7 @@ function NorthStarBlock({ overview, loading }: { overview: OverviewData | null; 
       <div style={northStarLeftStyle}>
         <div style={sectionLabelStyle}>
           <span style={sectionLabelDot} />
-          NORTH STAR · 北极星指标
+          北极星指标 · NORTH STAR
         </div>
         <div style={{ marginTop: 22 }}>
           <div style={northStarKickerStyle}>
@@ -309,14 +303,14 @@ function PrimaryMetrics({ overview, loading }: { overview: OverviewData | null; 
       sub: '本周新增大脑',
       value: loading ? '——' : String(overview?.brains.week_new ?? 0),
       tone: COLORS.amber,
-      foot: `完成 ${overview?.brains.week_completed ?? 0} · 收敛 ${overview ? (overview.brains.convergence_rate * 100).toFixed(1) : '0.0'}%`,
+      foot: `完成 ${overview?.brains.week_completed ?? 0} · 收敛率 ${overview ? (overview.brains.convergence_rate * 100).toFixed(1) : '0.0'}%`,
     },
     {
       label: 'AVG CE',
       sub: '平均认知深度',
       value: loading ? '——' : (overview?.brains.avg_ce_depth ?? 0).toFixed(1),
       tone: COLORS.pink,
-      foot: 'CE per completed brain',
+      foot: '单大脑平均认知元素数',
     },
     {
       label: 'PAPERS',
@@ -330,7 +324,7 @@ function PrimaryMetrics({ overview, loading }: { overview: OverviewData | null; 
       sub: '主脑吸收量',
       value: loading ? '——' : String(overview?.master_brain.ce_absorbed ?? 0),
       tone: COLORS.blue,
-      foot: 'cognitive elements absorbed',
+      foot: '主脑已吸收认知元素',
     },
   ]
   return (
@@ -377,7 +371,7 @@ function TrendsBlock({ trends, loading }: { trends: TrendsData | null; loading: 
       <div style={trendsHeaderStyle}>
         <div style={sectionLabelStyle}>
           <span style={sectionLabelDot} />
-          TIMELINE · 30 天趋势
+          30 天趋势 · TIMELINE
         </div>
         <div style={trendsTabsStyle}>
           {TREND_SERIES.map((s) => (
@@ -397,22 +391,22 @@ function TrendsBlock({ trends, loading }: { trends: TrendsData | null; loading: 
       <div style={trendsBodyStyle}>
         <div style={trendsLeftStyle}>
           <div style={{ color: COLORS.textDim, fontFamily: FONT_MONO, fontSize: 11 }}>
-            30 DAY TOTAL
+            30 天合计 · 30 DAY TOTAL
           </div>
           <div style={{ ...northStarValueStyle, fontSize: 64, color: cur.color, marginTop: 8 }}>
             {loading ? '——' : total.toLocaleString()}
           </div>
           <div style={{ color: COLORS.textDim, fontSize: 12, fontFamily: FONT_MONO, marginTop: 6 }}>
-            PEAK · {days[peakIdx] || '—'}{' '}
+            峰值 · {days[peakIdx] || '—'}{' '}
             <span style={{ color: cur.color }}>{series[peakIdx] ?? 0}</span>
           </div>
           <div style={trendsLegendStyle}>
             <div>
-              <span style={{ color: COLORS.textFaint, marginRight: 6 }}>FROM</span>
+              <span style={{ color: COLORS.textFaint, marginRight: 6 }}>起期</span>
               <span style={{ color: COLORS.text, fontFamily: FONT_MONO }}>{days[0] || '—'}</span>
             </div>
             <div>
-              <span style={{ color: COLORS.textFaint, marginRight: 6 }}>TO</span>
+              <span style={{ color: COLORS.textFaint, marginRight: 6 }}>止期</span>
               <span style={{ color: COLORS.text, fontFamily: FONT_MONO }}>
                 {days[days.length - 1] || '—'}
               </span>
@@ -564,10 +558,10 @@ function FunnelBlock({ overview }: { overview: OverviewData | null }) {
       <div style={panelHeaderStyle}>
         <div style={sectionLabelStyle}>
           <span style={sectionLabelDot} />
-          FUNNEL · 用户转化漏斗
+          用户转化漏斗 · FUNNEL
         </div>
         <div style={{ color: COLORS.textFaint, fontFamily: FONT_MONO, fontSize: 11 }}>
-          REGISTER → SHARE
+          注册 → 分享
         </div>
       </div>
       <div style={{ marginTop: 22 }}>
@@ -647,7 +641,7 @@ function LeaderboardBlock({
       <div style={panelHeaderStyle}>
         <div style={sectionLabelStyle}>
           <span style={sectionLabelDot} />
-          LEADERBOARD · 贡献排行
+          贡献排行 · LEADERBOARD
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           {tabs.map((t) => (
@@ -668,9 +662,9 @@ function LeaderboardBlock({
             rows={(board?.top_users || []).map((u, i) => ({
               rank: i + 1,
               primary: u.username,
-              secondary: `USER · #${u.id}`,
+              secondary: `用户 · #${u.id}`,
               metric: u.brain_count,
-              metricLabel: 'brains',
+              metricLabel: '个大脑',
               tone: COLORS.cyan,
             }))}
           />
@@ -679,7 +673,7 @@ function LeaderboardBlock({
           <BoardList
             rows={(board?.top_brains || []).map((b, i) => ({
               rank: i + 1,
-              primary: b.name || `Brain #${b.id}`,
+              primary: b.name || `大脑 #${b.id}`,
               secondary: `${b.owner_name} · ${b.state}`,
               metric: b.ce_count,
               metricLabel: 'CE',
@@ -692,10 +686,10 @@ function LeaderboardBlock({
           <BoardList
             rows={(board?.top_papers || []).map((p, i) => ({
               rank: i + 1,
-              primary: p.title || `Paper #${p.id}`,
-              secondary: `${p.owner_name} · brain #${p.brain_id}`,
+              primary: p.title || `论文 #${p.id}`,
+              secondary: `${p.owner_name} · 大脑 #${p.brain_id}`,
               metric: p.view_count,
-              metricLabel: 'views',
+              metricLabel: '浏览',
               tone: COLORS.violet,
               onClick: () => window.open(`/ainstein/api/public/papers/${p.share_token}/pdf`, '_blank'),
             }))}
@@ -719,7 +713,7 @@ function BoardList({ rows }: { rows: BoardRow[] }) {
   if (!rows.length) {
     return (
       <div style={{ padding: '40px 0', textAlign: 'center', color: COLORS.textFaint, fontFamily: FONT_MONO }}>
-        — NO DATA YET —
+        — 暂无数据 —
       </div>
     )
   }
