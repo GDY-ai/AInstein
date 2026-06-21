@@ -229,6 +229,11 @@ export const api = {
     request('/discoveries/mine') as Promise<{ items: Discovery[] }>,
   myDiscoveryActions: () =>
     request('/discoveries/actions') as Promise<{ actions: DiscoveryAction[] }>,
+
+  // === 管理员运营仪表盘（需 admin 角色）===
+  adminStatsOverview: () => request('/admin/stats/overview') as Promise<any>,
+  adminStatsTrends: () => request('/admin/stats/trends') as Promise<any>,
+  adminStatsLeaderboard: () => request('/admin/stats/leaderboard') as Promise<any>,
 };
 
 // 命名导出方便直接 import

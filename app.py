@@ -1719,6 +1719,248 @@ def public_paper_pdf(share_token: str) -> Any:
     )
 
 
+# ============================================================
+# 管理员 KPI 运营仪表盘（Admin Stats）
+# ============================================================
+
+@app.route('/ainstein/api/admin/stats/overview', methods=['GET'])
+@auth.require_admin
+def admin_stats_overview() -> Any:
+    """返回核心北极星指标 + 一级运营指标。"""
+    try:
+        with db.get_db() as conn:
+            # === 活跃用户：DAU / WAU / MAU（按 tracking_events.user_id 去重）===
+            dau = conn.execute(
+                "SELECT COUNT(DISTINCT user_id) AS c FROM tracking_events "
+                "WHERE user_id IS NOT NULL AND created_at >= datetime('now','-1 day')"
+            ).fetchone()['c']
+            wau = conn.execute(
+                "SELECT COUNT(DISTINCT user_id) AS c FROM tracking_events "
+                "WHERE user_id IS NOT NULL AND created_at >= datetime('now','-7 day')"
+            ).fetchone()['c']
+            mau = conn.execute(
+                "SELECT COUNT(DISTINCT user_id) AS c FROM tracking_events "
+                "WHERE user_id IS NOT NULL AND created_at >= datetime('now','-30 day')"
+            ).fetchone()['c']
+
+            # === 大脑：本周新增 / 完成 / 收敛率 ===
+            brains_week_new = conn.execute(
+                "SELECT COUNT(*) AS c FROM brains "
+                "WHERE created_at >= datetime('now','-7 day') "
+                "AND COALESCE(brain_type,'standalone') != 'master'"
+            ).fetchone()['c']
+            brains_week_completed = conn.execute(
+                "SELECT COUNT(*) AS c FROM brains "
+                "WHERE state='completed' AND created_at >= datetime('now','-7 day') "
+                "AND COALESCE(brain_type,'standalone') != 'master'"
+            ).fetchone()['c']
+            convergence_rate = (
+                round(brains_week_completed / brains_week_new, 4)
+                if brains_week_new > 0 else 0.0
+            )
+
+            # === 平均 CE 深度（completed 大脑）===
+            avg_ce_row = conn.execute(
+                "SELECT AVG(ce_count) AS avg_ce FROM ("
+                "  SELECT b.id, COUNT(c.id) AS ce_count FROM brains b "
+                "  LEFT JOIN cognitive_elements c ON c.brain_id = b.id "
+                "  WHERE b.state='completed' AND COALESCE(b.brain_type,'standalone') != 'master' "
+                "  GROUP BY b.id"
+                ")"
+            ).fetchone()
+            avg_ce_depth = round(avg_ce_row['avg_ce'] or 0.0, 2)
+
+            # === 论文：生成数 / 分享数 / 公开查看数 ===
+            papers_generated = conn.execute(
+                "SELECT COUNT(*) AS c FROM tracking_events WHERE event_type='paper_generated'"
+            ).fetchone()['c']
+            papers_shared = conn.execute(
+                "SELECT COUNT(*) AS c FROM paper_shares"
+            ).fetchone()['c']
+            paper_views_row = conn.execute(
+                "SELECT COALESCE(SUM(view_count),0) AS s FROM paper_shares"
+            ).fetchone()
+            paper_views = paper_views_row['s'] or 0
+
+            # === 主脑 CE 吸收量 ===
+            master_row = conn.execute(
+                "SELECT id FROM brains WHERE brain_type='master' LIMIT 1"
+            ).fetchone()
+            master_ce_count = 0
+            if master_row:
+                master_ce_count = conn.execute(
+                    "SELECT COUNT(*) AS c FROM cognitive_elements WHERE brain_id=?",
+                    (master_row['id'],),
+                ).fetchone()['c']
+
+            # === WABCR：周活跃思考完成率（北极星指标）===
+            # 定义：本周完成思考的活跃用户 / 本周活跃用户
+            week_active_users = conn.execute(
+                "SELECT COUNT(DISTINCT user_id) AS c FROM tracking_events "
+                "WHERE user_id IS NOT NULL AND created_at >= datetime('now','-7 day')"
+            ).fetchone()['c']
+            week_completing_users = conn.execute(
+                "SELECT COUNT(DISTINCT owner_user_id) AS c FROM brains "
+                "WHERE state='completed' AND owner_user_id IS NOT NULL "
+                "AND COALESCE(brain_type,'standalone') != 'master' "
+                "AND COALESCE(last_active_at, created_at) >= datetime('now','-7 day')"
+            ).fetchone()['c']
+            wabcr = (
+                round(week_completing_users / week_active_users, 4)
+                if week_active_users > 0 else 0.0
+            )
+
+            # === 用户漏斗（累计）===
+            users_total = conn.execute(
+                "SELECT COUNT(*) AS c FROM users"
+            ).fetchone()['c']
+            users_with_brain = conn.execute(
+                "SELECT COUNT(DISTINCT owner_user_id) AS c FROM brains "
+                "WHERE owner_user_id IS NOT NULL AND COALESCE(brain_type,'standalone') != 'master'"
+            ).fetchone()['c']
+            users_with_completed = conn.execute(
+                "SELECT COUNT(DISTINCT owner_user_id) AS c FROM brains "
+                "WHERE state='completed' AND owner_user_id IS NOT NULL "
+                "AND COALESCE(brain_type,'standalone') != 'master'"
+            ).fetchone()['c']
+            users_with_paper = conn.execute(
+                "SELECT COUNT(DISTINCT user_id) AS c FROM tracking_events "
+                "WHERE event_type='paper_generated' AND user_id IS NOT NULL"
+            ).fetchone()['c']
+            users_with_share = conn.execute(
+                "SELECT COUNT(DISTINCT b.owner_user_id) AS c FROM paper_shares ps "
+                "JOIN brains b ON b.id = ps.brain_id "
+                "WHERE b.owner_user_id IS NOT NULL"
+            ).fetchone()['c']
+
+        return jsonify({
+            'active_users': {'dau': dau, 'wau': wau, 'mau': mau},
+            'brains': {
+                'week_new': brains_week_new,
+                'week_completed': brains_week_completed,
+                'convergence_rate': convergence_rate,
+                'avg_ce_depth': avg_ce_depth,
+            },
+            'papers': {
+                'generated': papers_generated,
+                'shared': papers_shared,
+                'public_views': paper_views,
+            },
+            'master_brain': {'ce_absorbed': master_ce_count},
+            'north_star': {
+                'wabcr': wabcr,
+                'week_active_users': week_active_users,
+                'week_completing_users': week_completing_users,
+            },
+            'funnel': {
+                'registered': users_total,
+                'created_brain': users_with_brain,
+                'completed_thinking': users_with_completed,
+                'generated_paper': users_with_paper,
+                'shared_paper': users_with_share,
+            },
+        })
+    except Exception as exc:
+        logger.exception('admin_stats_overview failed')
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/ainstein/api/admin/stats/trends', methods=['GET'])
+@auth.require_admin
+def admin_stats_trends() -> Any:
+    """过去 30 天每日趋势数据。"""
+    try:
+        with db.get_db() as conn:
+            # 每日新用户
+            new_users = conn.execute(
+                "SELECT date(created_at) AS d, COUNT(*) AS c FROM users "
+                "WHERE created_at >= datetime('now','-30 day') "
+                "GROUP BY date(created_at) ORDER BY d"
+            ).fetchall()
+            # 每日新大脑
+            new_brains = conn.execute(
+                "SELECT date(created_at) AS d, COUNT(*) AS c FROM brains "
+                "WHERE created_at >= datetime('now','-30 day') "
+                "AND COALESCE(brain_type,'standalone') != 'master' "
+                "GROUP BY date(created_at) ORDER BY d"
+            ).fetchall()
+            # 每日 CE 产出
+            new_ces = conn.execute(
+                "SELECT date(created_at) AS d, COUNT(*) AS c FROM cognitive_elements "
+                "WHERE created_at >= datetime('now','-30 day') "
+                "GROUP BY date(created_at) ORDER BY d"
+            ).fetchall()
+            # 每日论文分享
+            new_shares = conn.execute(
+                "SELECT date(created_at) AS d, COUNT(*) AS c FROM paper_shares "
+                "WHERE created_at >= datetime('now','-30 day') "
+                "GROUP BY date(created_at) ORDER BY d"
+            ).fetchall()
+
+        # 补齐 30 天连续日期序列
+        from datetime import datetime, timedelta
+        today = datetime.utcnow().date()
+        days = [(today - timedelta(days=29 - i)).isoformat() for i in range(30)]
+
+        def _series(rows: List[Any]) -> List[int]:
+            m = {row['d']: int(row['c']) for row in rows}
+            return [m.get(d, 0) for d in days]
+
+        return jsonify({
+            'days': days,
+            'new_users': _series(new_users),
+            'new_brains': _series(new_brains),
+            'new_ces': _series(new_ces),
+            'new_shares': _series(new_shares),
+        })
+    except Exception as exc:
+        logger.exception('admin_stats_trends failed')
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/ainstein/api/admin/stats/leaderboard', methods=['GET'])
+@auth.require_admin
+def admin_stats_leaderboard() -> Any:
+    """贡献排行榜：用户、大脑、论文。"""
+    try:
+        with db.get_db() as conn:
+            top_users = conn.execute(
+                "SELECT u.id, u.username, COUNT(b.id) AS brain_count "
+                "FROM users u "
+                "JOIN brains b ON b.owner_user_id = u.id "
+                "WHERE COALESCE(b.brain_type,'standalone') != 'master' "
+                "GROUP BY u.id, u.username "
+                "ORDER BY brain_count DESC, u.id ASC LIMIT 10"
+            ).fetchall()
+            top_brains = conn.execute(
+                "SELECT b.id, b.name, b.seed_question, b.state, "
+                "       COALESCE(u.username,'anon') AS owner_name, "
+                "       COUNT(c.id) AS ce_count "
+                "FROM brains b "
+                "LEFT JOIN cognitive_elements c ON c.brain_id = b.id "
+                "LEFT JOIN users u ON u.id = b.owner_user_id "
+                "WHERE COALESCE(b.brain_type,'standalone') != 'master' "
+                "GROUP BY b.id "
+                "ORDER BY ce_count DESC, b.id ASC LIMIT 10"
+            ).fetchall()
+            top_papers = conn.execute(
+                "SELECT ps.id, ps.share_token, ps.title, ps.view_count, ps.brain_id, "
+                "       COALESCE(u.username,'anon') AS owner_name "
+                "FROM paper_shares ps "
+                "LEFT JOIN brains b ON b.id = ps.brain_id "
+                "LEFT JOIN users u ON u.id = b.owner_user_id "
+                "ORDER BY ps.view_count DESC, ps.id ASC LIMIT 10"
+            ).fetchall()
+        return jsonify({
+            'top_users': [dict(r) for r in top_users],
+            'top_brains': [dict(r) for r in top_brains],
+            'top_papers': [dict(r) for r in top_papers],
+        })
+    except Exception as exc:
+        logger.exception('admin_stats_leaderboard failed')
+        return jsonify({'error': str(exc)}), 500
+
+
 if __name__ == '__main__':
     db.init_db()
     # 挂载观察员事件订阅（全局，幂等）
