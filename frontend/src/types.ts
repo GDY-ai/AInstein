@@ -217,3 +217,14 @@ export interface ThinkingSummary {
   methodology_note: string
   generated_at?: string
 }
+
+// ===== 论文公开分享 =====
+
+export interface PaperShare {
+  share_token: string;
+  url: string;
+  pdf_url?: string | null;
+  view_count?: number;
+  title?: string;
+  filename?: string;
+}

@@ -302,6 +302,21 @@ CREATE TABLE IF NOT EXISTS tracking_events (
 );
 CREATE INDEX IF NOT EXISTS idx_te_user ON tracking_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_te_type ON tracking_events(event_type, created_at);
+
+-- ========= 论文公开分享 =========
+
+CREATE TABLE IF NOT EXISTS paper_shares (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    brain_id INTEGER NOT NULL,
+    share_token TEXT UNIQUE NOT NULL,
+    title TEXT,
+    filename TEXT NOT NULL,
+    view_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (brain_id) REFERENCES brains(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ps_token ON paper_shares(share_token);
+CREATE INDEX IF NOT EXISTS idx_ps_brain ON paper_shares(brain_id, created_at);
 """
 
 
@@ -1012,6 +1027,57 @@ def add_tracking_event(
             user_id, event_type, brain_id,
         )
         return 0
+
+
+# ============================================================
+# 论文公开分享
+# ============================================================
+
+def create_paper_share(brain_id: int, title: Optional[str], filename: str) -> str:
+    """创建论文分享记录，返回 share_token（12 位 hex）。"""
+    import uuid
+    token = uuid.uuid4().hex[:12]
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO paper_shares (brain_id, share_token, title, filename) "
+            "VALUES (?, ?, ?, ?)",
+            (brain_id, token, title, filename),
+        )
+    return token
+
+
+def get_paper_share(share_token: str) -> Optional[Dict[str, Any]]:
+    """根据 token 获取分享记录。"""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM paper_shares WHERE share_token=?",
+            (share_token,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def increment_share_view(share_token: str) -> None:
+    """增加查看次数（失败静默）。"""
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE paper_shares SET view_count = view_count + 1 "
+                "WHERE share_token=?",
+                (share_token,),
+            )
+    except Exception:
+        logger.exception("increment_share_view failed token=%s", share_token)
+
+
+def get_latest_paper_share_for_brain(brain_id: int) -> Optional[Dict[str, Any]]:
+    """获取某大脑最新一条分享记录（用于前端复用已有链接）。"""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM paper_shares WHERE brain_id=? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (brain_id,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 # ============================================================

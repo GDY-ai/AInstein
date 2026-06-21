@@ -4,7 +4,7 @@ import re
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
-from flask import Flask, request, jsonify, send_from_directory, g
+from flask import Flask, request, jsonify, send_from_directory, send_file, g, Response
 import database as db
 import auth
 
@@ -1371,6 +1371,274 @@ def download_paper(brain_id: int, filename: str) -> Any:
         logger.exception('tracking paper.downloaded failed')
 
     return send_from_directory(PAPERS_DIR, filename, as_attachment=True)
+
+
+# ============================================================
+# 论文公开分享（paper share）
+# ============================================================
+
+def _find_latest_paper_files(brain_id: int) -> Tuple[Optional[str], Optional[str]]:
+    """扫描 PAPERS_DIR，返回该 brain 最新一份论文的 (pdf_filename, md_filename)。
+
+    文件名格式：brain{brain_id}_YYYYMMDD_HHMMSS.{pdf|md}。按名字逆序即按
+    时间逆序。任一不存在则该项返回 None。
+    """
+    from paper_generator import PAPERS_DIR
+    if not os.path.isdir(PAPERS_DIR):
+        return None, None
+    prefix = f'brain{brain_id}_'
+    pdfs: List[str] = []
+    mds: List[str] = []
+    try:
+        for fn in os.listdir(PAPERS_DIR):
+            if not fn.startswith(prefix):
+                continue
+            if fn.endswith('.pdf'):
+                pdfs.append(fn)
+            elif fn.endswith('.md'):
+                mds.append(fn)
+    except OSError:
+        return None, None
+    pdfs.sort(reverse=True)
+    mds.sort(reverse=True)
+    return (pdfs[0] if pdfs else None), (mds[0] if mds else None)
+
+
+def _markdown_to_simple_html(md_text: str) -> str:
+    """轻量级 markdown 转 HTML（仅针对公开页使用）。
+
+    不引入 markdown 依赖以减少负担：仅处理标题 / 加粗 / 斜体 /
+    行内代码 / 列表 / 段落。如需高保真阅读可后续换为专业库。
+    """
+    import html as _html
+
+    lines = md_text.replace('\r\n', '\n').split('\n')
+    out: List[str] = []
+    in_ul = False
+    in_code = False
+    code_buf: List[str] = []
+
+    def flush_ul() -> None:
+        nonlocal in_ul
+        if in_ul:
+            out.append('</ul>')
+            in_ul = False
+
+    def inline(s: str) -> str:
+        s = _html.escape(s)
+        # 行内代码
+        s = re.sub(r'`([^`]+)`', r'<code>\1</code>', s)
+        # 加粗 **xxx**
+        s = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', s)
+        # 斜体 *xxx*
+        s = re.sub(r'(?<!\*)\*([^*\n]+)\*(?!\*)', r'<em>\1</em>', s)
+        return s
+
+    for raw in lines:
+        line = raw.rstrip()
+        # 代码块
+        if line.startswith('```'):
+            if not in_code:
+                flush_ul()
+                in_code = True
+                code_buf = []
+            else:
+                in_code = False
+                code_html = _html.escape('\n'.join(code_buf))
+                out.append(f'<pre><code>{code_html}</code></pre>')
+                code_buf = []
+            continue
+        if in_code:
+            code_buf.append(raw)
+            continue
+
+        if not line.strip():
+            flush_ul()
+            continue
+
+        m = re.match(r'^(#{1,6})\s+(.*)$', line)
+        if m:
+            flush_ul()
+            level = len(m.group(1))
+            out.append(f'<h{level}>{inline(m.group(2))}</h{level}>')
+            continue
+
+        m = re.match(r'^[-*+]\s+(.*)$', line)
+        if m:
+            if not in_ul:
+                out.append('<ul>')
+                in_ul = True
+            out.append(f'<li>{inline(m.group(1))}</li>')
+            continue
+
+        flush_ul()
+        out.append(f'<p>{inline(line)}</p>')
+
+    flush_ul()
+    if in_code and code_buf:
+        code_html = _html.escape('\n'.join(code_buf))
+        out.append(f'<pre><code>{code_html}</code></pre>')
+
+    return '\n'.join(out)
+
+
+_PUBLIC_PAPER_TEMPLATE = """<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>{title}</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  body {{ margin: 0; background: #0f1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }}
+  .wrap {{ max-width: 820px; margin: 0 auto; padding: 56px 24px 96px; line-height: 1.75; }}
+  .badge {{ display: inline-block; font-size: 11px; letter-spacing: 3px; color: #64748b; border: 1px solid #1f2333; padding: 4px 10px; border-radius: 999px; }}
+  h1 {{ font-size: 28px; margin: 16px 0 8px; color: #f8fafc; line-height: 1.35; }}
+  h2 {{ font-size: 20px; margin-top: 36px; color: #93c5fd; border-left: 3px solid #3b82f6; padding-left: 10px; }}
+  h3 {{ font-size: 16px; margin-top: 24px; color: #cbd5e1; }}
+  p {{ color: #cbd5e1; }}
+  a {{ color: #60a5fa; }}
+  code {{ background: rgba(148,163,184,0.12); padding: 1px 5px; border-radius: 3px; font-size: 0.92em; }}
+  pre {{ background: #1a1d27; border: 1px solid #1f2333; padding: 14px; border-radius: 8px; overflow: auto; }}
+  pre code {{ background: transparent; padding: 0; }}
+  ul {{ padding-left: 22px; }}
+  li {{ margin: 4px 0; }}
+  .meta {{ display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: #94a3b8; margin: 14px 0 28px; padding-bottom: 16px; border-bottom: 1px solid #1f2333; }}
+  .actions {{ margin-top: 8px; }}
+  .btn {{ display: inline-block; padding: 8px 16px; border-radius: 8px; background: #1d4ed8; color: #fff; text-decoration: none; font-size: 13px; }}
+  .btn:hover {{ background: #2563eb; }}
+  .footer {{ margin-top: 64px; padding-top: 18px; border-top: 1px solid #1f2333; font-size: 12px; color: #64748b; text-align: center; }}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="badge">AINSTEIN · PUBLIC RESEARCH</span>
+    <h1>{title}</h1>
+    <div class="meta">
+      <span>大脑 #{brain_id}</span>
+      <span>查看次数 {view_count}</span>
+      <span>生成于 {created_at}</span>
+    </div>
+    {pdf_action}
+    <article>{body}</article>
+    <div class="footer">来自 AInstein 硬基大脑 · 公开研究报告</div>
+  </div>
+</body>
+</html>"""
+
+
+@app.route('/ainstein/api/brains/<int:brain_id>/share', methods=['POST'])
+@auth.require_auth
+def create_brain_paper_share(brain_id: int) -> Any:
+    """为指定大脑的最新论文创建一个公开分享链接。仅 owner / admin 可调用。"""
+    user = g.current_user
+    brain, err = _ensure_brain(brain_id)
+    if err:
+        return err
+    is_admin = (user.get('role') or '').lower() == 'admin'
+    if brain.get('owner_user_id') != user['id'] and not is_admin:
+        return jsonify({'error': 'forbidden'}), 403
+
+    pdf_fn, md_fn = _find_latest_paper_files(brain_id)
+    filename = pdf_fn or md_fn
+    if not filename:
+        return jsonify({'error': '暂无可分享的论文，请先生成研究报告'}), 404
+
+    seed_q = (brain.get('seed_question') or '').strip()
+    title = f"关于「{seed_q}」的研究报告" if seed_q else (brain.get('name') or f'AInstein Brain #{brain_id}')
+
+    token = db.create_paper_share(brain_id, title, filename)
+
+    try:
+        db.add_tracking_event(
+            user['id'], 'paper.shared', brain_id=brain_id,
+            metadata={'token': token, 'filename': filename},
+        )
+    except Exception:
+        logger.exception('tracking paper.shared failed')
+
+    return jsonify({
+        'share_token': token,
+        'url': f'/ainstein/api/public/papers/{token}',
+        'pdf_url': f'/ainstein/api/public/papers/{token}/pdf' if pdf_fn else None,
+        'view_count': 0,
+        'title': title,
+        'filename': filename,
+    }), 201
+
+
+@app.route('/ainstein/api/public/papers/<share_token>', methods=['GET'])
+def public_paper_view(share_token: str) -> Any:
+    """公开论文阅读页（HTML，无需登录）。"""
+    from paper_generator import PAPERS_DIR
+    share = db.get_paper_share(share_token)
+    if not share:
+        return Response('<h1>404</h1><p>分享链接不存在或已失效</p>',
+                        status=404, mimetype='text/html; charset=utf-8')
+
+    db.increment_share_view(share_token)
+    view_count = int(share.get('view_count') or 0) + 1
+
+    filename = share.get('filename') or ''
+    brain_id = int(share.get('brain_id') or 0)
+    title = share.get('title') or f'AInstein Brain #{brain_id}'
+    created_at = share.get('created_at') or ''
+
+    # 优先读取同名 md；若 share 存的是 pdf，则取同 base 的 md
+    base = filename.rsplit('.', 1)[0]
+    md_path = os.path.join(PAPERS_DIR, base + '.md')
+    pdf_path = os.path.join(PAPERS_DIR, base + '.pdf')
+    has_pdf = os.path.isfile(pdf_path)
+
+    if not os.path.isfile(md_path):
+        return Response('<h1>404</h1><p>论文文件已不存在</p>',
+                        status=404, mimetype='text/html; charset=utf-8')
+
+    try:
+        with open(md_path, 'r', encoding='utf-8') as f:
+            md_text = f.read()
+    except OSError:
+        logger.exception('read shared paper md failed token=%s', share_token)
+        return Response('<h1>500</h1><p>读取论文失败</p>',
+                        status=500, mimetype='text/html; charset=utf-8')
+
+    body = _markdown_to_simple_html(md_text)
+    pdf_action = (
+        f'<div class="actions"><a class="btn" href="/ainstein/api/public/papers/{share_token}/pdf">下载 PDF</a></div>'
+        if has_pdf else ''
+    )
+    html_text = _PUBLIC_PAPER_TEMPLATE.format(
+        title=title,
+        brain_id=brain_id,
+        view_count=view_count,
+        created_at=created_at,
+        pdf_action=pdf_action,
+        body=body,
+    )
+    resp = Response(html_text, mimetype='text/html; charset=utf-8')
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
+
+
+@app.route('/ainstein/api/public/papers/<share_token>/pdf', methods=['GET'])
+def public_paper_pdf(share_token: str) -> Any:
+    """公开 PDF 下载入口（无需登录）。"""
+    from paper_generator import PAPERS_DIR
+    share = db.get_paper_share(share_token)
+    if not share:
+        return jsonify({'error': 'share not found'}), 404
+    db.increment_share_view(share_token)
+    filename = share.get('filename') or ''
+    base = filename.rsplit('.', 1)[0]
+    pdf_path = os.path.join(PAPERS_DIR, base + '.pdf')
+    if not os.path.isfile(pdf_path):
+        return jsonify({'error': 'pdf not available'}), 404
+    return send_file(
+        pdf_path,
+        mimetype='application/pdf',
+        as_attachment=False,
+        download_name=f'ainstein_brain{share.get("brain_id")}.pdf',
+    )
 
 
 if __name__ == '__main__':

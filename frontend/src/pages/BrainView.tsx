@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import * as d3 from 'd3'
-import { api, generatePaper, getPaperStatus } from '../api'
-import type { Brain, CognitiveNode, KnowledgeGraph, ThinkingSummary } from '../types'
+import { api, generatePaper, getPaperStatus, sharePaper } from '../api'
+import type { Brain, CognitiveNode, KnowledgeGraph, PaperShare, ThinkingSummary } from '../types'
 import ObserverPanel from '../components/ObserverPanel'
 import { track } from '../tracking'
 
@@ -157,6 +157,55 @@ export default function BrainView() {
   function handleDownloadPaper() {
     if (paperDownloadUrl) {
       window.open(paperDownloadUrl, '_blank')
+    }
+  }
+
+  // ---------- 论文分享 ----------
+  const [share, setShare] = useState<PaperShare | null>(null)
+  const [shareLoading, setShareLoading] = useState(false)
+  const [shareError, setShareError] = useState('')
+  const [shareCopied, setShareCopied] = useState(false)
+  const [sharePanelOpen, setSharePanelOpen] = useState(false)
+
+  const buildAbsoluteShareUrl = (path: string) => {
+    if (typeof window === 'undefined') return path
+    return `${window.location.origin}${path}`
+  }
+
+  async function handleSharePaper() {
+    setShareError('')
+    setShareLoading(true)
+    try {
+      const res = await sharePaper(bid)
+      setShare(res)
+      setSharePanelOpen(true)
+      track('paper.share_clicked', { brain_id: bid, token: res.share_token })
+    } catch (e: any) {
+      setShareError(e?.message || '分享失败')
+      setSharePanelOpen(true)
+    } finally {
+      setShareLoading(false)
+    }
+  }
+
+  async function handleCopyShareLink() {
+    if (!share?.url) return
+    const fullUrl = buildAbsoluteShareUrl(share.url)
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(fullUrl)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = fullUrl
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      setShareCopied(true)
+      setTimeout(() => setShareCopied(false), 1800)
+    } catch {
+      setShareError('复制失败，请手动选中链接')
     }
   }
 
@@ -727,8 +776,69 @@ export default function BrainView() {
               📥 下载研究报告(PDF)
             </button>
           ) : null}
+          {/* 公开分享按钮：paper 已生成过才启用 */}
+          <button
+            onClick={handleSharePaper}
+            disabled={shareLoading || paperState === 'processing'}
+            style={{
+              ...paperBtnStyle,
+              background: 'linear-gradient(135deg, rgba(99,102,241,0.18), rgba(236,72,153,0.18))',
+              borderColor: 'rgba(129,140,248,0.55)',
+              color: '#c7d2fe',
+              opacity: shareLoading ? 0.7 : 1,
+            }}
+            title="生成公开分享链接"
+          >
+            {shareLoading ? <span className="paper-spinner" /> : '✨'} 分享论文
+          </button>
         </div>
       </header>
+
+      {sharePanelOpen && (
+        <div style={sharePanelStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={shareBadgeStyle}>PUBLIC · LINK</span>
+              <span style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 500 }}>
+                {shareError ? '生成分享链接失败' : '分享链接已准备就绪'}
+              </span>
+              {share && typeof share.view_count === 'number' && !shareError && (
+                <span style={shareCountStyle}>· 已被查看 {share.view_count} 次</span>
+              )}
+            </div>
+            <button onClick={() => setSharePanelOpen(false)} style={shareCloseBtn}>×</button>
+          </div>
+          {shareError ? (
+            <div style={{ marginTop: 10, fontSize: 12, color: '#fca5a5' }}>{shareError}</div>
+          ) : share ? (
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                readOnly
+                value={buildAbsoluteShareUrl(share.url)}
+                onFocus={e => e.currentTarget.select()}
+                style={shareInputStyle}
+              />
+              <button onClick={handleCopyShareLink} style={shareCopyBtnStyle}>
+                {shareCopied ? '✓ 已复制' : '📋 复制链接'}
+              </button>
+              <a
+                href={share.url}
+                target="_blank"
+                rel="noreferrer"
+                style={shareOpenBtnStyle}
+                onClick={() => track('paper.share_opened', { brain_id: bid, token: share.share_token })}
+              >
+                ↗ 预览
+              </a>
+              {share.pdf_url && (
+                <a href={share.pdf_url} target="_blank" rel="noreferrer" style={shareOpenBtnStyle}>
+                  📄 PDF
+                </a>
+              )}
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {error && (
         <div style={{ padding: '6px 24px', background: '#ef444422', color: '#ef4444', fontSize: 12 }}>{error}</div>
@@ -1278,3 +1388,68 @@ const refutedList: React.CSSProperties = { listStyle: 'none', padding: 0, margin
 const refutedItem: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '4px 0', fontSize: 13, color: '#94a3b8' }
 const openQList: React.CSSProperties = { listStyle: 'disc', paddingLeft: 18, margin: 0, fontSize: 13, color: '#cbd5e1' }
 const methodNote: React.CSSProperties = { margin: 0, fontSize: 13, color: '#a5b4fc', fontStyle: 'italic' }
+
+// ---------- 论文公开分享面板样式 ----------
+const sharePanelStyle: React.CSSProperties = {
+  margin: '8px 16px 0',
+  padding: '12px 16px',
+  borderRadius: 10,
+  background: 'linear-gradient(135deg, rgba(99,102,241,0.10), rgba(236,72,153,0.08))',
+  border: '1px solid rgba(129,140,248,0.35)',
+  boxShadow: '0 8px 32px -16px rgba(99,102,241,0.6)',
+}
+const shareBadgeStyle: React.CSSProperties = {
+  fontSize: 10,
+  letterSpacing: 2,
+  padding: '3px 8px',
+  borderRadius: 999,
+  background: 'rgba(129,140,248,0.18)',
+  color: '#c7d2fe',
+  border: '1px solid rgba(129,140,248,0.4)',
+}
+const shareCountStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#94a3b8',
+}
+const shareInputStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 240,
+  background: '#0f1117',
+  border: '1px solid #1f2333',
+  color: '#cbd5e1',
+  fontSize: 12,
+  padding: '8px 10px',
+  borderRadius: 6,
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+}
+const shareCopyBtnStyle: React.CSSProperties = {
+  background: '#1d4ed8',
+  border: 'none',
+  color: '#fff',
+  fontSize: 12,
+  padding: '8px 14px',
+  borderRadius: 6,
+  cursor: 'pointer',
+  fontWeight: 500,
+}
+const shareOpenBtnStyle: React.CSSProperties = {
+  background: 'transparent',
+  border: '1px solid rgba(148,163,184,0.4)',
+  color: '#cbd5e1',
+  fontSize: 12,
+  padding: '7px 12px',
+  borderRadius: 6,
+  textDecoration: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+}
+const shareCloseBtn: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  color: '#64748b',
+  cursor: 'pointer',
+  fontSize: 22,
+  lineHeight: 1,
+  padding: 0,
+}

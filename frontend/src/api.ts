@@ -5,6 +5,7 @@ import type {
   CreateBrainResponse,
   KnowledgeGraph,
   ObserverLog,
+  PaperShare,
   ThinkingSummary,
   User,
 } from './types';
@@ -219,4 +220,9 @@ export async function generatePaper(brainId: number): Promise<{ task_id: string;
 
 export async function getPaperStatus(brainId: number, taskId: string): Promise<{ status: string; progress?: string; download_url?: string; error?: string }> {
   return request(`/brains/${brainId}/paper-status/${taskId}`);
+}
+
+// 论文公开分享
+export async function sharePaper(brainId: number): Promise<PaperShare> {
+  return request(`/brains/${brainId}/share`, { method: 'POST' });
 }
