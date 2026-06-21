@@ -49,10 +49,43 @@ interface BgStar {
 
 // ===================== 常量 =====================
 
-const SPHERE_COLORS = [
-  '#4fd1c5', '#6b46c1', '#ed8936', '#90cdf4', '#d53f8c', '#a0aec0',
-  '#81e6d9', '#9f7aea', '#f6ad55', '#bee3f8', '#f687b3', '#cbd5e0',
+// 用户着色色板（与深空背景搭配，区分度高）
+const OWNER_COLORS = [
+  '#4fd1c5', // 青蓝
+  '#63b3ed', // 天蓝
+  '#f6c179', // 琥珀
+  '#a78bfa', // 紫罗兰
+  '#fb7185', // 玫红
+  '#34d399', // 翠绿
+  '#fbbf24', // 金黄
+  '#e879f9', // 品红
+  '#38bdf8', // 亮蓝
+  '#f472b6', // 粉色
 ];
+
+const FALLBACK_OWNER_COLOR = '#a0aec0';
+
+function buildOwnerColorMap(brains: Brain[]): Map<string, string> {
+  const map = new Map<string, string>();
+  let idx = 0;
+  for (const brain of brains) {
+    if (brain.brain_type === 'master') continue;
+    const key = brain.owner_user_id != null
+      ? `id:${brain.owner_user_id}`
+      : (brain.owner_username ? `name:${brain.owner_username}` : 'unknown');
+    if (!map.has(key)) {
+      map.set(key, OWNER_COLORS[idx % OWNER_COLORS.length]);
+      idx++;
+    }
+  }
+  return map;
+}
+
+function ownerKeyOf(brain: Brain): string {
+  if (brain.owner_user_id != null) return `id:${brain.owner_user_id}`;
+  if (brain.owner_username) return `name:${brain.owner_username}`;
+  return 'unknown';
+}
 
 const STATE_COLORS: Record<string, string> = {
   active: '#7be3d3',
@@ -137,6 +170,9 @@ export default function BigScreen() {
   const dragRef = useRef<{ dragging: boolean; lastX: number; lastY: number }>({ dragging: false, lastX: 0, lastY: 0 });
   const timeRef = useRef(0);
 
+  // 用户颜色图例数据
+  const [ownerLegend, setOwnerLegend] = useState<Array<{ key: string; label: string; color: string; count: number }>>([]);
+
   // ===== 构建图 =====
   const buildGraph = useCallback((brains: Brain[], width: number, height: number) => {
     const cx = width / 2;
@@ -155,6 +191,25 @@ export default function BigScreen() {
       return a.id - b.id;
     });
 
+    // 按 owner 首次出现顺序分配颜色
+    const ownerColorMap = buildOwnerColorMap(sorted);
+
+    // 构建图例：聚合每个 owner 的颜色与数量
+    const legendMap = new Map<string, { label: string; color: string; count: number }>();
+    for (const brain of sorted) {
+      if (brain.brain_type === 'master') continue;
+      const key = ownerKeyOf(brain);
+      const color = ownerColorMap.get(key) || FALLBACK_OWNER_COLOR;
+      const label = brain.owner_username || '匿名用户';
+      const existing = legendMap.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        legendMap.set(key, { label, color, count: 1 });
+      }
+    }
+    const legend = Array.from(legendMap.entries()).map(([key, v]) => ({ key, ...v }));
+
     const branches = sorted.filter(b => b.brain_type !== 'master');
     const N = Math.max(1, branches.length);
 
@@ -166,7 +221,9 @@ export default function BigScreen() {
       const radius = isMaster
         ? Math.min(220, Math.max(150, Math.min(width, height) * 0.18))
         : 28 + Math.min((brain.think_count || 0) * 0.18, 7);
-      const color = isMaster ? '#cfe4ff' : SPHERE_COLORS[branchSlot % SPHERE_COLORS.length];
+      const color = isMaster
+        ? '#cfe4ff'
+        : (ownerColorMap.get(ownerKeyOf(brain)) || FALLBACK_OWNER_COLOR);
 
       let angle = 0;
       let targetAngle = 0;
@@ -220,6 +277,7 @@ export default function BigScreen() {
 
     nodesRef.current = nodes;
     edgesRef.current = edges;
+    setOwnerLegend(legend);
   }, []);
 
   // ===== 背景星空 =====
@@ -567,6 +625,61 @@ export default function BigScreen() {
       }}>
         实时拓扑
       </div>
+
+      {/* 用户颜色图例 */}
+      {ownerLegend.length > 0 && (
+        <div style={{
+          position: 'absolute', top: 80, right: 32,
+          color: '#dce6f5', fontSize: 12,
+          fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif',
+          background: 'rgba(10, 14, 26, 0.85)',
+          borderRadius: 10,
+          padding: '14px 16px',
+          border: '1px solid rgba(120, 160, 220, 0.15)',
+          backdropFilter: 'blur(14px) saturate(140%)',
+          WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.4)',
+          pointerEvents: 'none',
+          letterSpacing: 0.4,
+          minWidth: 160,
+          maxWidth: 220,
+          maxHeight: 'calc(100vh - 200px)',
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            fontSize: 11, color: '#7a8da8', letterSpacing: 2,
+            marginBottom: 10, paddingBottom: 8,
+            borderBottom: '1px dashed rgba(120,160,220,0.18)',
+          }}>
+            用户图例
+          </div>
+          {ownerLegend.map(item => (
+            <div key={item.key} style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              marginBottom: 6, fontSize: 12,
+            }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%',
+                background: item.color,
+                boxShadow: `0 0 8px ${item.color}`,
+                flexShrink: 0,
+              }} />
+              <span style={{
+                color: '#dce6f5',
+                flex: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>{item.label}</span>
+              <span style={{
+                color: '#7a8da8',
+                fontFamily: '"JetBrains Mono", monospace',
+                fontSize: 11,
+              }}>{item.count}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {hoveredBrain && (
         <div style={{
