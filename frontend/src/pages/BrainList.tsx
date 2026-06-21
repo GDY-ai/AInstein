@@ -41,6 +41,7 @@ export default function BrainList() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [actionBusy, setActionBusy] = useState<number | null>(null)
+  const [achievementCount, setAchievementCount] = useState<{ unlocked: number; total: number } | null>(null)
 
   const isAdmin = (user?.role || '').toLowerCase() === 'admin'
 
@@ -57,6 +58,9 @@ export default function BrainList() {
   useEffect(() => {
     if (!getToken()) return
     load()
+    api.getMyAchievements()
+      .then((r) => setAchievementCount({ unlocked: r.unlocked_count, total: r.total }))
+      .catch(() => { /* 静默 */ })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin])
 
@@ -197,6 +201,14 @@ export default function BrainList() {
               <span style={{ color: 'var(--text2)' }}>{isAdmin ? '管理员 ·' : '观察员 ·'}</span>{' '}
               <span style={{ color: 'var(--text)' }}>{user.username}</span>
               {isAdmin && <span style={adminBadgeStyle}>ADMIN</span>}
+              {achievementCount && (
+                <span
+                  title={`已解锁 ${achievementCount.unlocked} / ${achievementCount.total} 个成就`}
+                  style={achievementBadgeStyle}
+                >
+                  🏆 {achievementCount.unlocked}/{achievementCount.total}
+                </span>
+              )}
             </span>
           )}
           <button onClick={logout} style={ghostBtnStyle}>退出</button>
@@ -854,6 +866,18 @@ const adminBadgeStyle: CSSProperties = {
   borderRadius: 4,
   marginLeft: 4,
   letterSpacing: 1,
+}
+const achievementBadgeStyle: CSSProperties = {
+  marginLeft: 8,
+  fontSize: 11,
+  fontWeight: 600,
+  color: '#facc15',
+  background: 'rgba(250, 204, 21, 0.10)',
+  border: '1px solid rgba(250, 204, 21, 0.35)',
+  padding: '2px 8px',
+  borderRadius: 999,
+  letterSpacing: 0.5,
+  whiteSpace: 'nowrap',
 }
 const ghostBtnStyle: CSSProperties = {
   background: 'transparent',

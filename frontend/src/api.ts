@@ -7,6 +7,8 @@ import type {
   DiscoveryAction,
   DiscoverySort,
   KnowledgeGraph,
+  LeaderboardResponse,
+  MyAchievementsResponse,
   ObserverLog,
   PaperShare,
   ThinkingSummary,
@@ -234,6 +236,12 @@ export const api = {
   adminStatsOverview: () => request('/admin/stats/overview') as Promise<any>,
   adminStatsTrends: () => request('/admin/stats/trends') as Promise<any>,
   adminStatsLeaderboard: () => request('/admin/stats/leaderboard') as Promise<any>,
+
+  // === 用户成就与公开排行榜（Task #6）===
+  getMyAchievements: () =>
+    request('/users/me/achievements') as Promise<MyAchievementsResponse>,
+  getLeaderboard: () =>
+    request('/leaderboard') as Promise<LeaderboardResponse>,
 };
 
 // 命名导出方便直接 import

@@ -347,6 +347,18 @@ CREATE TABLE IF NOT EXISTS user_discovery_actions (
 );
 CREATE INDEX IF NOT EXISTS idx_uda_user ON user_discovery_actions(user_id);
 CREATE INDEX IF NOT EXISTS idx_uda_disc ON user_discovery_actions(discovery_id);
+
+-- ========= 用户成就（Task #6 用户激励与成就系统） =========
+
+CREATE TABLE IF NOT EXISTS user_achievements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    achievement_key TEXT NOT NULL,
+    unlocked_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, achievement_key)
+);
+CREATE INDEX IF NOT EXISTS idx_ua_user ON user_achievements(user_id);
+CREATE INDEX IF NOT EXISTS idx_ua_key ON user_achievements(achievement_key);
 """
 
 
@@ -1653,6 +1665,230 @@ def get_user_saved_discoveries(
     with get_db() as conn:
         rows = conn.execute(sql, (user_id, limit, offset)).fetchall()
     return [dict(r) for r in rows]
+
+
+# ============================================================
+# 用户成就（Task #6）
+# ============================================================
+
+ACHIEVEMENTS: Dict[str, Dict[str, str]] = {
+    'first_brain':   {'name': '初心',       'desc': '创建首个大脑',          'icon': '🧠'},
+    'deep_thinker':  {'name': '深度思考者',   'desc': '单个大脑 CE ≥ 100',       'icon': '💭'},
+    'prolific':      {'name': '多产',       'desc': '累计创建 10 个大脑',       'icon': '🌟'},
+    'sharer':        {'name': '传播者',     'desc': '首次分享论文',          'icon': '🔗'},
+    'popular':       {'name': '名声远扬',   'desc': '论文被查看 100 次',       'icon': '🔥'},
+    'discoverer':    {'name': '发现家',     'desc': '发现被收藏 10 次',         'icon': '💎'},
+    'streak_7':      {'name': '连续7天',     'desc': '连续 7 天活跃',           'icon': '⚡'},
+}
+
+
+def unlock_achievement(user_id: int, achievement_key: str) -> bool:
+    """解锁成就。返回是否为首次解锁（True）。
+
+    未知 key 或重复解锁返回 False。失败静默。
+    """
+    if achievement_key not in ACHIEVEMENTS:
+        return False
+    try:
+        with get_db() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO user_achievements (user_id, achievement_key) "
+                "VALUES (?, ?)",
+                (user_id, achievement_key),
+            )
+            return (cur.rowcount or 0) > 0
+    except Exception:
+        logger.exception(
+            "unlock_achievement failed user=%s key=%s", user_id, achievement_key,
+        )
+        return False
+
+
+def get_user_achievements(user_id: int) -> List[Dict[str, Any]]:
+    """返回该用户所有已解锁成就列表（含元数据）。"""
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT achievement_key, unlocked_at FROM user_achievements "
+                "WHERE user_id=? ORDER BY unlocked_at DESC",
+                (user_id,),
+            ).fetchall()
+    except Exception:
+        logger.exception("get_user_achievements failed user=%s", user_id)
+        return []
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        key = row['achievement_key']
+        meta = ACHIEVEMENTS.get(key, {})
+        out.append({
+            'key': key,
+            'name': meta.get('name') or key,
+            'desc': meta.get('desc') or '',
+            'icon': meta.get('icon') or '🏆',
+            'unlocked_at': row['unlocked_at'],
+        })
+    return out
+
+
+def get_leaderboard() -> Dict[str, List[Dict[str, Any]]]:
+    """公开排行榜：大脑数 / 成就数 / CE 最多的大脑 各 Top 10。"""
+    try:
+        with get_db() as conn:
+            top_brain_users = conn.execute(
+                "SELECT u.id AS user_id, u.username, COUNT(b.id) AS brain_count "
+                "FROM users u "
+                "JOIN brains b ON b.owner_user_id = u.id "
+                "WHERE COALESCE(b.brain_type,'standalone') != 'master' "
+                "GROUP BY u.id, u.username "
+                "ORDER BY brain_count DESC, u.id ASC LIMIT 10"
+            ).fetchall()
+            top_achievement_users = conn.execute(
+                "SELECT u.id AS user_id, u.username, COUNT(ua.id) AS achievement_count "
+                "FROM users u "
+                "JOIN user_achievements ua ON ua.user_id = u.id "
+                "GROUP BY u.id, u.username "
+                "ORDER BY achievement_count DESC, u.id ASC LIMIT 10"
+            ).fetchall()
+            top_brains = conn.execute(
+                "SELECT b.id AS brain_id, b.name, b.seed_question, b.state, "
+                "       COALESCE(u.username,'anon') AS owner_username, "
+                "       COUNT(c.id) AS ce_count "
+                "FROM brains b "
+                "LEFT JOIN cognitive_elements c ON c.brain_id = b.id "
+                "LEFT JOIN users u ON u.id = b.owner_user_id "
+                "WHERE COALESCE(b.brain_type,'standalone') != 'master' "
+                "GROUP BY b.id "
+                "ORDER BY ce_count DESC, b.id ASC LIMIT 10"
+            ).fetchall()
+        return {
+            'top_brain_users': [dict(r) for r in top_brain_users],
+            'top_achievement_users': [dict(r) for r in top_achievement_users],
+            'top_brains': [dict(r) for r in top_brains],
+        }
+    except Exception:
+        logger.exception("get_leaderboard failed")
+        return {'top_brain_users': [], 'top_achievement_users': [], 'top_brains': []}
+
+
+def _has_achievement(conn: sqlite3.Connection, user_id: int, key: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM user_achievements WHERE user_id=? AND achievement_key=?",
+        (user_id, key),
+    ).fetchone()
+    return row is not None
+
+
+def check_and_unlock_achievements(user_id: int) -> List[str]:
+    """检查并解锁所有满足条件的成就。返回本次新解锁的 key 列表。
+
+    各成就条件：
+    - first_brain：创建过 ≥1 个非主脑大脑
+    - prolific：   创建过 ≥10 个非主脑大脑
+    - deep_thinker：名下任一大脑 CE 数 ≥100
+    - sharer：     名下大脑有任一 paper_shares
+    - popular：    名下大脑 paper_shares.view_count 总和 ≥100
+    - discoverer： 名下大脑 discoveries.saves_count 总和 ≥10
+    - streak_7：   连续 7 天均有 tracking_events
+    """
+    new_keys: List[str] = []
+    try:
+        with get_db() as conn:
+            # first_brain / prolific
+            brain_row = conn.execute(
+                "SELECT COUNT(*) AS c FROM brains "
+                "WHERE owner_user_id=? AND COALESCE(brain_type,'standalone') != 'master'",
+                (user_id,),
+            ).fetchone()
+            brain_cnt = int(brain_row['c'] if brain_row else 0)
+            if brain_cnt >= 1 and not _has_achievement(conn, user_id, 'first_brain'):
+                if conn.execute(
+                    "INSERT OR IGNORE INTO user_achievements (user_id, achievement_key) VALUES (?, ?)",
+                    (user_id, 'first_brain'),
+                ).rowcount:
+                    new_keys.append('first_brain')
+            if brain_cnt >= 10 and not _has_achievement(conn, user_id, 'prolific'):
+                if conn.execute(
+                    "INSERT OR IGNORE INTO user_achievements (user_id, achievement_key) VALUES (?, ?)",
+                    (user_id, 'prolific'),
+                ).rowcount:
+                    new_keys.append('prolific')
+
+            # deep_thinker
+            if not _has_achievement(conn, user_id, 'deep_thinker'):
+                deep_row = conn.execute(
+                    "SELECT MAX(ce_count) AS m FROM ("
+                    "  SELECT b.id, COUNT(c.id) AS ce_count FROM brains b "
+                    "  LEFT JOIN cognitive_elements c ON c.brain_id = b.id "
+                    "  WHERE b.owner_user_id=? "
+                    "  AND COALESCE(b.brain_type,'standalone') != 'master' "
+                    "  GROUP BY b.id"
+                    ")",
+                    (user_id,),
+                ).fetchone()
+                if deep_row and (deep_row['m'] or 0) >= 100:
+                    if conn.execute(
+                        "INSERT OR IGNORE INTO user_achievements (user_id, achievement_key) VALUES (?, ?)",
+                        (user_id, 'deep_thinker'),
+                    ).rowcount:
+                        new_keys.append('deep_thinker')
+
+            # sharer / popular
+            share_row = conn.execute(
+                "SELECT COUNT(*) AS c, COALESCE(SUM(ps.view_count),0) AS v "
+                "FROM paper_shares ps JOIN brains b ON b.id = ps.brain_id "
+                "WHERE b.owner_user_id=?",
+                (user_id,),
+            ).fetchone()
+            share_cnt = int(share_row['c'] if share_row else 0)
+            view_sum = int(share_row['v'] if share_row else 0)
+            if share_cnt >= 1 and not _has_achievement(conn, user_id, 'sharer'):
+                if conn.execute(
+                    "INSERT OR IGNORE INTO user_achievements (user_id, achievement_key) VALUES (?, ?)",
+                    (user_id, 'sharer'),
+                ).rowcount:
+                    new_keys.append('sharer')
+            if view_sum >= 100 and not _has_achievement(conn, user_id, 'popular'):
+                if conn.execute(
+                    "INSERT OR IGNORE INTO user_achievements (user_id, achievement_key) VALUES (?, ?)",
+                    (user_id, 'popular'),
+                ).rowcount:
+                    new_keys.append('popular')
+
+            # discoverer
+            if not _has_achievement(conn, user_id, 'discoverer'):
+                disc_row = conn.execute(
+                    "SELECT COALESCE(SUM(d.saves_count),0) AS s "
+                    "FROM discoveries d JOIN brains b ON b.id = d.brain_id "
+                    "WHERE b.owner_user_id=?",
+                    (user_id,),
+                ).fetchone()
+                if disc_row and (disc_row['s'] or 0) >= 10:
+                    if conn.execute(
+                        "INSERT OR IGNORE INTO user_achievements (user_id, achievement_key) VALUES (?, ?)",
+                        (user_id, 'discoverer'),
+                    ).rowcount:
+                        new_keys.append('discoverer')
+
+            # streak_7：连续 7 天（含今天）均有 tracking_events
+            if not _has_achievement(conn, user_id, 'streak_7'):
+                day_rows = conn.execute(
+                    "SELECT DISTINCT date(created_at) AS d FROM tracking_events "
+                    "WHERE user_id=? AND created_at >= datetime('now','-7 day')",
+                    (user_id,),
+                ).fetchall()
+                day_set = {row['d'] for row in day_rows}
+                from datetime import datetime, timedelta
+                today = datetime.utcnow().date()
+                expected = {(today - timedelta(days=i)).isoformat() for i in range(7)}
+                if expected.issubset(day_set):
+                    if conn.execute(
+                        "INSERT OR IGNORE INTO user_achievements (user_id, achievement_key) VALUES (?, ?)",
+                        (user_id, 'streak_7'),
+                    ).rowcount:
+                        new_keys.append('streak_7')
+    except Exception:
+        logger.exception("check_and_unlock_achievements failed user=%s", user_id)
+    return new_keys
 
 
 def auto_create_discoveries(brain_id: int, threshold: float = 0.75, limit: int = 10) -> int:

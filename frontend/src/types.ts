@@ -252,3 +252,40 @@ export interface DiscoveryAction {
   discovery_id: number;
   action_type: 'like' | 'save';
 }
+
+// ===== 用户成就与排行榜（Task #6）=====
+
+export interface Achievement {
+  key: string;
+  name: string;
+  desc: string;
+  icon: string;
+  unlocked?: boolean;
+  unlocked_at?: string;
+}
+
+export interface MyAchievementsResponse {
+  unlocked: Achievement[];
+  unlocked_count: number;
+  total: number;
+  catalog: Achievement[];
+}
+
+export interface LeaderboardEntry {
+  user_id?: number;
+  brain_id?: number;
+  username?: string;
+  owner_username?: string;
+  name?: string;
+  seed_question?: string;
+  state?: string;
+  brain_count?: number;
+  achievement_count?: number;
+  ce_count?: number;
+}
+
+export interface LeaderboardResponse {
+  top_brain_users: LeaderboardEntry[];
+  top_achievement_users: LeaderboardEntry[];
+  top_brains: LeaderboardEntry[];
+}

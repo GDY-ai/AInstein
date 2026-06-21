@@ -165,6 +165,10 @@ def auth_login() -> Any:
 
     token = auth.generate_token(user['id'], role=user.get('role') or 'user')
     db.add_tracking_event(user['id'], 'user.login')
+    try:
+        db.check_and_unlock_achievements(user['id'])
+    except Exception:
+        logger.exception('check_and_unlock_achievements (login) failed')
     return jsonify({'token': token, 'user': auth.public_user(user)})
 
 
@@ -388,6 +392,10 @@ def create_brain_api() -> Any:
         logger.exception('start_brain failed for brain=%s', brain_id)
 
     brain = db.get_brain(brain_id)
+    try:
+        db.check_and_unlock_achievements(user['id'])
+    except Exception:
+        logger.exception('check_and_unlock_achievements (create_brain) failed')
     return jsonify({
         'brain': _brain_view(brain),
         'seed_ce': seed_ce,
@@ -510,6 +518,13 @@ def stop_brain_api(brain_id: int) -> Any:
         )
     except Exception:
         logger.exception('publish brain.stopped failed')
+
+    try:
+        owner_id = brain.get('owner_user_id')
+        if owner_id:
+            db.check_and_unlock_achievements(int(owner_id))
+    except Exception:
+        logger.exception('check_and_unlock_achievements (stop_brain) failed')
 
     return jsonify({'status': 'completed', 'brain': _brain_view(db.get_brain(brain_id))})
 
@@ -1635,6 +1650,11 @@ def create_brain_paper_share(brain_id: int) -> Any:
     except Exception:
         logger.exception('tracking paper.shared failed')
 
+    try:
+        db.check_and_unlock_achievements(user['id'])
+    except Exception:
+        logger.exception('check_and_unlock_achievements (share) failed')
+
     return jsonify({
         'share_token': token,
         'url': f'/ainstein/api/public/papers/{token}',
@@ -1717,6 +1737,46 @@ def public_paper_pdf(share_token: str) -> Any:
         as_attachment=False,
         download_name=f'ainstein_brain{share.get("brain_id")}.pdf',
     )
+
+
+# ============================================================
+# 用户成就与公开排行榜（Task #6）
+# ============================================================
+
+@app.route('/ainstein/api/users/me/achievements', methods=['GET'])
+@auth.require_auth
+def my_achievements_api() -> Any:
+    """返回当前用户已解锁成就，以及所有可解锁成就的定义。"""
+    user = g.current_user
+    try:
+        db.check_and_unlock_achievements(user['id'])
+    except Exception:
+        logger.exception('check_and_unlock_achievements (api) failed')
+    unlocked = db.get_user_achievements(user['id'])
+    unlocked_keys = {item['key'] for item in unlocked}
+    catalog = [
+        {
+            'key': key,
+            'name': meta['name'],
+            'desc': meta['desc'],
+            'icon': meta['icon'],
+            'unlocked': key in unlocked_keys,
+        }
+        for key, meta in db.ACHIEVEMENTS.items()
+    ]
+    return jsonify({
+        'unlocked': unlocked,
+        'unlocked_count': len(unlocked),
+        'total': len(db.ACHIEVEMENTS),
+        'catalog': catalog,
+    })
+
+
+@app.route('/ainstein/api/leaderboard', methods=['GET'])
+def public_leaderboard_api() -> Any:
+    """公开排行榜（无需登录）。"""
+    data = db.get_leaderboard()
+    return jsonify(data)
 
 
 # ============================================================
