@@ -8,6 +8,7 @@ import {
   setToken,
 } from '../api'
 import type { Brain, User } from '../types'
+import { track } from '../tracking'
 
 const STATE_LABEL: Record<string, string> = {
   gestating: '孕育中',
@@ -48,6 +49,7 @@ export default function BrainList() {
       navigate('/login', { replace: true })
       return
     }
+    track('page.view', { page: 'brain_list' })
     refreshUser()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

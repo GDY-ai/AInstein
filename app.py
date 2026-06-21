@@ -133,6 +133,7 @@ def auth_register() -> Any:
 
     user = db.get_user(uid) or {}
     token = auth.generate_token(uid, role=user.get('role') or role)
+    db.add_tracking_event(uid, 'user.registered', metadata={'role': user.get('role') or role})
     return jsonify({'token': token, 'user': auth.public_user(user)}), 201
 
 
@@ -163,6 +164,7 @@ def auth_login() -> Any:
         return jsonify({'error': '该账号已被禁用'}), 403
 
     token = auth.generate_token(user['id'], role=user.get('role') or 'user')
+    db.add_tracking_event(user['id'], 'user.login')
     return jsonify({'token': token, 'user': auth.public_user(user)})
 
 
@@ -171,6 +173,40 @@ def auth_login() -> Any:
 def auth_me() -> Any:
     """返回当前登录用户信息。"""
     return jsonify({'user': auth.public_user(g.current_user)})
+
+
+# ---------- 用户行为埋点 ----------
+
+@app.route('/ainstein/api/tracking', methods=['POST'])
+@auth.require_auth
+def track_events() -> Any:
+    """批量上报前端埋点事件。请求体 ``{events: [{type, brain_id?, metadata?}, ...]}``。"""
+    data = request.get_json(silent=True) or {}
+    events = data.get('events') or []
+    if not isinstance(events, list):
+        return jsonify({'error': 'events 需为数组'}), 400
+    user_id = g.current_user['id']
+    tracked = 0
+    for ev in events[:50]:  # 限制单次最多 50 条
+        if not isinstance(ev, dict):
+            continue
+        ev_type = ev.get('type') or 'unknown'
+        brain_id = ev.get('brain_id')
+        try:
+            brain_id = int(brain_id) if brain_id is not None else None
+        except (TypeError, ValueError):
+            brain_id = None
+        metadata = ev.get('metadata')
+        if metadata is not None and not isinstance(metadata, dict):
+            metadata = None
+        db.add_tracking_event(
+            user_id=user_id,
+            event_type=str(ev_type)[:80],
+            brain_id=brain_id,
+            metadata=metadata,
+        )
+        tracked += 1
+    return jsonify({'status': 'ok', 'tracked': tracked})
 
 
 # ---------- 大脑生命周期 ----------
@@ -284,6 +320,12 @@ def create_brain_api() -> Any:
         db.update_brain_state(brain_id, 'active')
     except Exception:
         logger.exception('update_brain_state failed')
+
+    # 记录创建大脑埋点
+    db.add_tracking_event(
+        user['id'], 'brain.created_by_user', brain_id=brain_id,
+        metadata={'name': name, 'seed_len': seed_len},
+    )
 
     # spawn 初始 agent
     initial_agents = _seed_initial_agents(brain_id)
@@ -1258,6 +1300,16 @@ def generate_paper_api(brain_id: int) -> Any:
     t = threading.Thread(target=_run_paper_gen, args=(brain_id, task_id), daemon=True)
     t.start()
 
+    try:
+        _user = auth.get_current_user()
+        db.add_tracking_event(
+            _user['id'] if _user else None,
+            'paper.generated', brain_id=brain_id,
+            metadata={'task_id': task_id},
+        )
+    except Exception:
+        logger.exception('tracking paper.generated failed')
+
     return jsonify({'task_id': task_id, 'status': 'processing'}), 202
 
 
@@ -1307,6 +1359,16 @@ def download_paper(brain_id: int, filename: str) -> Any:
     file_path = os.path.join(PAPERS_DIR, filename)
     if not os.path.isfile(file_path):
         return jsonify({'error': 'file not found'}), 404
+
+    try:
+        _user = auth.get_current_user()
+        db.add_tracking_event(
+            _user['id'] if _user else None,
+            'paper.downloaded', brain_id=brain_id,
+            metadata={'filename': filename},
+        )
+    except Exception:
+        logger.exception('tracking paper.downloaded failed')
 
     return send_from_directory(PAPERS_DIR, filename, as_attachment=True)
 

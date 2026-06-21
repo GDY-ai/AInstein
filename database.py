@@ -289,6 +289,19 @@ CREATE TABLE IF NOT EXISTS brain_snapshots (
     created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_bs_brain ON brain_snapshots(brain_id, created_at);
+
+-- ========= 用户行为埋点 =========
+
+CREATE TABLE IF NOT EXISTS tracking_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    event_type TEXT NOT NULL,
+    brain_id INTEGER,
+    metadata_json TEXT DEFAULT '{}',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_te_user ON tracking_events(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_te_type ON tracking_events(event_type, created_at);
 """
 
 
@@ -967,6 +980,38 @@ def get_brain_snapshots(brain_id: int, limit: int = 100) -> List[Dict[str, Any]]
             (brain_id, limit)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ============================================================
+# Tracking Events （用户行为埋点）
+# ============================================================
+
+def add_tracking_event(
+    user_id: Optional[int],
+    event_type: str,
+    brain_id: Optional[int] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> int:
+    """记录一条用户行为事件。失败不抛异常，仅记录日志。"""
+    try:
+        with get_db() as conn:
+            cur = conn.execute(
+                "INSERT INTO tracking_events (user_id, event_type, brain_id, metadata_json) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    user_id,
+                    event_type,
+                    brain_id,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                ),
+            )
+            return int(cur.lastrowid or 0)
+    except Exception:
+        logger.exception(
+            "add_tracking_event failed user=%s type=%s brain=%s",
+            user_id, event_type, brain_id,
+        )
+        return 0
 
 
 # ============================================================

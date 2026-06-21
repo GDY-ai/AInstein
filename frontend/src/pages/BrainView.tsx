@@ -4,6 +4,7 @@ import * as d3 from 'd3'
 import { api, generatePaper, getPaperStatus } from '../api'
 import type { Brain, CognitiveNode, KnowledgeGraph, ThinkingSummary } from '../types'
 import ObserverPanel from '../components/ObserverPanel'
+import { track } from '../tracking'
 
 // ---------- 类型 ----------
 interface GraphNode extends d3.SimulationNodeDatum, CognitiveNode {
@@ -106,6 +107,13 @@ export default function BrainView() {
       if (paperPollRef.current) clearInterval(paperPollRef.current)
     }
   }, [])
+
+  // 页面查看埋点
+  useEffect(() => {
+    if (Number.isFinite(bid)) {
+      track('page.view', { page: 'brain_view', brain_id: bid })
+    }
+  }, [bid])
 
   async function handleGeneratePaper() {
     try {
