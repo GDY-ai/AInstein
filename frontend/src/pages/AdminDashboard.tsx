@@ -4,12 +4,11 @@ import { api, getStoredUser } from '../api'
 import AdminNav from '../components/AdminNav'
 
 /* ============================================================
- * 「指挥舱 · OPERATIONS DECK」
- *  KPI 运营仪表盘 — 北极星指标 / 一级指标趋势 / 用户漏斗 / 排行榜
- *  美学方向：航天指挥屏 × 编辑式信息图，深空底色 + 单点琥珀强调
+ * 「运营仪表盘」
+ *  统一深空风：青蓝主调 + 320px 卡片 + 18px 间距
+ *  保留趋势图、漏斗、排行榜功能，但简化外观。
  * ============================================================ */
 
-// ---------- 字体注入 ----------
 const FONT_INJECT_ID = 'ainstein-admin-dashboard-fonts'
 function injectFonts() {
   if (typeof document === 'undefined') return
@@ -21,30 +20,26 @@ function injectFonts() {
     'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap'
   document.head.appendChild(link)
 }
-const FONT_DISPLAY = '"JetBrains Mono", ui-monospace, monospace'
-const FONT_BODY = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif'
+const FONT_BODY =
+  '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif'
 const FONT_MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
 
-// ---------- 配色 ----------
-const COLORS = {
+const C = {
   bg0: '#05070f',
   bg1: '#0a0e1a',
-  panel: 'rgba(15, 22, 38, 0.72)',
-  panelAlt: 'rgba(20, 28, 46, 0.5)',
+  panel: 'rgba(10, 14, 26, 0.75)',
+  panelAlt: 'rgba(15, 22, 38, 0.55)',
   border: 'rgba(120, 160, 220, 0.15)',
-  borderHot: 'rgba(79, 209, 197, 0.35)',
+  borderHot: 'rgba(79, 209, 197, 0.30)',
   text: '#dce6f5',
-  textDim: '#7a8da8',
-  textFaint: '#475569',
-  cyan: '#4fd1c5',
+  dim: '#7a8da8',
+  faint: '#475569',
+  accent: '#4fd1c5',
+  accent2: '#63b3ed',
   amber: '#f6c179',
-  pink: '#f687b3',
-  blue: '#63b3ed',
-  violet: '#a78bfa',
   rose: '#fb7185',
 }
 
-// ---------- 类型 ----------
 interface OverviewData {
   active_users: { dau: number; wau: number; mau: number }
   brains: { week_new: number; week_completed: number; convergence_rate: number; avg_ce_depth: number }
@@ -80,12 +75,9 @@ export default function AdminDashboard() {
   const [board, setBoard] = useState<LeaderboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [now, setNow] = useState(new Date())
 
   useEffect(() => {
     injectFonts()
-    const t = setInterval(() => setNow(new Date()), 1000)
-    return () => clearInterval(t)
   }, [])
 
   useEffect(() => {
@@ -107,11 +99,7 @@ export default function AdminDashboard() {
         if (!alive) return
         const msg = e?.message || '加载失败'
         setError(msg)
-        if (/admin/i.test(msg) || /403/.test(msg)) {
-          // 非 admin → 提示并返回
-        } else if (/401|auth/i.test(msg)) {
-          navigate('/login')
-        }
+        if (/401|auth/i.test(msg)) navigate('/login')
       } finally {
         if (alive) setLoading(false)
       }
@@ -127,59 +115,70 @@ export default function AdminDashboard() {
       <StyleTag />
       <div style={gridBg} />
       <div style={vignette} />
-      <div style={scanlines} />
 
-      {/* 顶部统一导航 */}
       <AdminNav
         active="dashboard"
         rightSlot={
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ color: COLORS.cyan, letterSpacing: 1.5 }}>{formatClock(now)}</span>
-            <span style={{ color: COLORS.textDim }}>·</span>
-            <span style={{ letterSpacing: 1 }}>
-              <span style={{ color: COLORS.textFaint }}>操作员 </span>
-              <span style={{ color: COLORS.text }}>{user?.username || '未知'}</span>{' '}
-              <span style={{ color: COLORS.amber }}>[{(user?.role || 'user').toUpperCase()}]</span>
-            </span>
+          <span style={{ letterSpacing: 1 }}>
+            <span style={{ color: C.faint }}>操作员 </span>
+            <span style={{ color: C.text }}>{user?.username || '未知'}</span>
           </span>
         }
       />
 
-      {/* 错误条 */}
-      {error && (
-        <div style={errorBarStyle}>
-          <span style={{ color: COLORS.rose, marginRight: 12 }}>◆ 错误</span>
-          {error}
+      <main style={contentStyle}>
+        {error && (
+          <div style={errorBarStyle}>
+            <span style={{ color: C.rose, marginRight: 12 }}>◆ 错误</span>
+            {error}
+          </div>
+        )}
+
+        <Hero />
+
+        <NorthStarBlock overview={overview} loading={loading} />
+        <PrimaryMetrics overview={overview} loading={loading} />
+        <TrendsBlock trends={trends} loading={loading} />
+
+        <div style={twoColStyle}>
+          <FunnelBlock overview={overview} />
+          <LeaderboardBlock board={board} navigate={navigate} />
         </div>
-      )}
+      </main>
+    </div>
+  )
+}
 
-      {/* === 北极星指标 === */}
-      <NorthStarBlock overview={overview} loading={loading} />
-
-      {/* === 一级指标矩阵 === */}
-      <PrimaryMetrics overview={overview} loading={loading} />
-
-      {/* === 趋势图 === */}
-      <TrendsBlock trends={trends} loading={loading} />
-
-      {/* === 漏斗 + 排行榜 === */}
-      <div style={twoColStyle}>
-        <FunnelBlock overview={overview} />
-        <LeaderboardBlock board={board} navigate={navigate} />
+function Hero() {
+  return (
+    <header style={heroStyle}>
+      <div style={{ flex: 1, minWidth: 280 }}>
+        <h1 style={heroTitleStyle}>运营仪表盘</h1>
+        <p style={heroSubStyle}>
+          俯瞰用户、大脑、论文与传播的整体走势。每一个数字背后，都是一段思考的轨迹。
+        </p>
       </div>
+    </header>
+  )
+}
 
-      <footer style={footerStyle}>
-        <span style={{ color: COLORS.textFaint }}>—— 数据流结束 ——</span>
-        <span style={{ color: COLORS.textFaint, fontFamily: FONT_MONO, fontSize: 11 }}>
-          AInstein · 运营仪表盘 · {now.toISOString().slice(0, 10)}
+function SectionTitle({ label, sub }: { label: string; sub?: string }) {
+  return (
+    <div style={sectionTitleStyle}>
+      <span style={sectionTitleDot} />
+      <span style={{ color: C.text, fontSize: 14, fontWeight: 600, letterSpacing: 1 }}>{label}</span>
+      {sub && (
+        <span style={{ color: C.faint, fontSize: 11, fontFamily: FONT_MONO, letterSpacing: 1 }}>
+          {sub}
         </span>
-      </footer>
+      )}
+      <span style={sectionTitleLine} />
     </div>
   )
 }
 
 // ============================================================
-// 北极星指标
+// 北极星指标 — 简洁大数字卡片
 // ============================================================
 function NorthStarBlock({ overview, loading }: { overview: OverviewData | null; loading: boolean }) {
   const wabcr = overview?.north_star.wabcr ?? 0
@@ -187,17 +186,12 @@ function NorthStarBlock({ overview, loading }: { overview: OverviewData | null; 
   const wcu = overview?.north_star.week_completing_users ?? 0
 
   return (
-    <section style={northStarStyle}>
-      <div style={northStarLeftStyle}>
-        <div style={sectionLabelStyle}>
-          <span style={sectionLabelDot} />
-          北极星指标 · NORTH STAR
-        </div>
-        <div style={{ marginTop: 22 }}>
-          <div style={northStarKickerStyle}>
-            周活跃思考完成率
-            <span style={{ color: COLORS.textFaint, margin: '0 10px' }}>·</span>
-            <span style={{ color: COLORS.amber, fontFamily: FONT_MONO }}>WABCR</span>
+    <section style={{ marginBottom: 28 }}>
+      <SectionTitle label="北极星指标" sub="周活跃思考完成率" />
+      <div style={northStarCardStyle}>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <div style={{ color: C.dim, fontSize: 13, letterSpacing: 0.5 }}>
+            本周活跃用户中，完成至少一次思考收敛的比例
           </div>
           <div style={northStarValueWrapStyle}>
             <span style={northStarValueStyle}>
@@ -206,83 +200,28 @@ function NorthStarBlock({ overview, loading }: { overview: OverviewData | null; 
             <span style={northStarUnitStyle}>%</span>
           </div>
           <div style={northStarMetaStyle}>
-            本周完成思考 <strong style={{ color: COLORS.cyan }}>{wcu}</strong> 人
-            <span style={{ color: COLORS.textFaint, margin: '0 8px' }}>/</span>
-            活跃用户 <strong style={{ color: COLORS.cyan }}>{wau}</strong> 人
+            完成思考 <strong style={{ color: C.accent }}>{wcu}</strong> 人
+            <span style={{ color: C.faint, margin: '0 8px' }}>/</span>
+            活跃 <strong style={{ color: C.accent }}>{wau}</strong> 人
+          </div>
+        </div>
+        <div style={northStarBarWrapStyle}>
+          <div style={northStarBarTrackStyle}>
+            <div
+              style={{
+                ...northStarBarFillStyle,
+                width: `${Math.min(100, wabcr * 100)}%`,
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontFamily: FONT_MONO, fontSize: 10, color: C.faint, letterSpacing: 1 }}>
+            <span>0%</span>
+            <span>50%</span>
+            <span>100%</span>
           </div>
         </div>
       </div>
-      <div style={northStarRightStyle}>
-        <NorthStarRing value={wabcr} />
-      </div>
     </section>
-  )
-}
-
-function NorthStarRing({ value }: { value: number }) {
-  const r = 78
-  const c = 2 * Math.PI * r
-  const filled = Math.max(0, Math.min(1, value))
-  return (
-    <svg width={200} height={200} viewBox="0 0 200 200">
-      <defs>
-        <linearGradient id="nsRing" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor={COLORS.amber} />
-          <stop offset="60%" stopColor={COLORS.pink} />
-          <stop offset="100%" stopColor={COLORS.violet} />
-        </linearGradient>
-        <filter id="nsGlow">
-          <feGaussianBlur stdDeviation="3" result="b" />
-          <feMerge>
-            <feMergeNode in="b" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-      {/* 外刻度 */}
-      {Array.from({ length: 60 }).map((_, i) => {
-        const a = (i / 60) * Math.PI * 2 - Math.PI / 2
-        const r1 = 92
-        const r2 = i % 5 === 0 ? 86 : 89
-        return (
-          <line
-            key={i}
-            x1={100 + Math.cos(a) * r1}
-            y1={100 + Math.sin(a) * r1}
-            x2={100 + Math.cos(a) * r2}
-            y2={100 + Math.sin(a) * r2}
-            stroke={i % 5 === 0 ? COLORS.cyan : 'rgba(123,227,211,0.25)'}
-            strokeWidth={1}
-            opacity={i % 5 === 0 ? 0.7 : 0.3}
-          />
-        )
-      })}
-      <circle cx={100} cy={100} r={r} fill="none" stroke="rgba(123,227,211,0.12)" strokeWidth={6} />
-      <circle
-        cx={100}
-        cy={100}
-        r={r}
-        fill="none"
-        stroke="url(#nsRing)"
-        strokeWidth={6}
-        strokeDasharray={`${c * filled} ${c}`}
-        strokeDashoffset={c * 0.25}
-        strokeLinecap="round"
-        filter="url(#nsGlow)"
-        transform="rotate(-90 100 100)"
-      />
-      <text
-        x={100}
-        y={104}
-        textAnchor="middle"
-        fontFamily={FONT_DISPLAY}
-        fontSize={14}
-        fill={COLORS.textDim}
-        letterSpacing={2}
-      >
-        WABCR
-      </text>
-    </svg>
   )
 }
 
@@ -290,59 +229,52 @@ function NorthStarRing({ value }: { value: number }) {
 // 一级指标矩阵
 // ============================================================
 function PrimaryMetrics({ overview, loading }: { overview: OverviewData | null; loading: boolean }) {
-  const cards: Array<{ label: string; sub: string; value: string; tone: string; foot?: string }> = [
+  const cards: Array<{ label: string; value: string; tone: string; foot?: string }> = [
     {
-      label: 'DAU',
-      sub: '日活用户',
+      label: '日活用户',
       value: loading ? '——' : String(overview?.active_users.dau ?? 0),
-      tone: COLORS.cyan,
-      foot: `WAU ${overview?.active_users.wau ?? 0} · MAU ${overview?.active_users.mau ?? 0}`,
+      tone: C.accent,
+      foot: `周活 ${overview?.active_users.wau ?? 0} · 月活 ${overview?.active_users.mau ?? 0}`,
     },
     {
-      label: 'WEEK BRAINS',
-      sub: '本周新增大脑',
+      label: '本周新增大脑',
       value: loading ? '——' : String(overview?.brains.week_new ?? 0),
-      tone: COLORS.amber,
+      tone: C.accent2,
       foot: `完成 ${overview?.brains.week_completed ?? 0} · 收敛率 ${overview ? (overview.brains.convergence_rate * 100).toFixed(1) : '0.0'}%`,
     },
     {
-      label: 'AVG CE',
-      sub: '平均认知深度',
+      label: '平均认知深度',
       value: loading ? '——' : (overview?.brains.avg_ce_depth ?? 0).toFixed(1),
-      tone: COLORS.pink,
+      tone: C.amber,
       foot: '单大脑平均认知元素数',
     },
     {
-      label: 'PAPERS',
-      sub: '论文产出',
+      label: '论文产出',
       value: loading ? '——' : String(overview?.papers.generated ?? 0),
-      tone: COLORS.violet,
+      tone: C.accent,
       foot: `分享 ${overview?.papers.shared ?? 0} · 公开浏览 ${overview?.papers.public_views ?? 0}`,
     },
     {
-      label: 'MASTER CE',
-      sub: '主脑吸收量',
+      label: '主脑吸收量',
       value: loading ? '——' : String(overview?.master_brain.ce_absorbed ?? 0),
-      tone: COLORS.blue,
+      tone: C.accent2,
       foot: '主脑已吸收认知元素',
     },
   ]
   return (
-    <section style={metricsRowStyle}>
-      {cards.map((c, i) => (
-        <div key={i} style={metricCardStyle(c.tone)}>
-          <div style={metricCornerTL(c.tone)} />
-          <div style={metricCornerBR(c.tone)} />
-          <div style={metricLabelStyle}>
-            <span style={{ color: c.tone }}>● </span>
-            {c.label}
-            <span style={{ color: COLORS.textFaint, margin: '0 8px' }}>·</span>
-            <span style={{ color: COLORS.textDim }}>{c.sub}</span>
+    <section style={{ marginBottom: 28 }}>
+      <SectionTitle label="一级指标" sub="核心运营数据" />
+      <div style={metricsGridStyle}>
+        {cards.map((c, i) => (
+          <div key={i} className="ainstein-metric-card" style={metricCardStyle}>
+            <div style={metricLabelStyle}>{c.label}</div>
+            <div style={{ ...metricValueStyle, color: c.tone, textShadow: `0 0 18px ${c.tone}33` }}>
+              {c.value}
+            </div>
+            {c.foot && <div style={metricFootStyle}>{c.foot}</div>}
           </div>
-          <div style={metricValueStyle(c.tone)}>{c.value}</div>
-          {c.foot && <div style={metricFootStyle}>{c.foot}</div>}
-        </div>
-      ))}
+        ))}
+      </div>
     </section>
   )
 }
@@ -350,11 +282,11 @@ function PrimaryMetrics({ overview, loading }: { overview: OverviewData | null; 
 // ============================================================
 // 趋势图
 // ============================================================
-const TREND_SERIES: Array<{ key: keyof TrendsData; label: string; sub: string; color: string }> = [
-  { key: 'new_users', label: '新用户', sub: 'NEW USERS', color: COLORS.cyan },
-  { key: 'new_brains', label: '新大脑', sub: 'NEW BRAINS', color: COLORS.amber },
-  { key: 'new_ces', label: 'CE 产出', sub: 'CE DELTA', color: COLORS.pink },
-  { key: 'new_shares', label: '论文分享', sub: 'SHARES', color: COLORS.violet },
+const TREND_SERIES: Array<{ key: keyof TrendsData; label: string; color: string }> = [
+  { key: 'new_users', label: '新用户', color: C.accent },
+  { key: 'new_brains', label: '新大脑', color: C.accent2 },
+  { key: 'new_ces', label: '认知节点', color: C.amber },
+  { key: 'new_shares', label: '论文分享', color: '#a78bfa' },
 ]
 
 function TrendsBlock({ trends, loading }: { trends: TrendsData | null; loading: boolean }) {
@@ -367,12 +299,9 @@ function TrendsBlock({ trends, loading }: { trends: TrendsData | null; loading: 
   const peakIdx = series.indexOf(Math.max(...series, 0))
 
   return (
-    <section style={trendsSectionStyle}>
-      <div style={trendsHeaderStyle}>
-        <div style={sectionLabelStyle}>
-          <span style={sectionLabelDot} />
-          30 天趋势 · TIMELINE
-        </div>
+    <section style={{ marginBottom: 28 }}>
+      <SectionTitle label="30 天趋势" sub="时间线" />
+      <div style={panelStyle}>
         <div style={trendsTabsStyle}>
           {TREND_SERIES.map((s) => (
             <button
@@ -380,41 +309,41 @@ function TrendsBlock({ trends, loading }: { trends: TrendsData | null; loading: 
               onClick={() => setActive(String(s.key))}
               style={trendsTabStyle(active === String(s.key), s.color)}
             >
-              <span style={{ color: s.color, marginRight: 8 }}>●</span>
+              <span style={{ color: s.color, marginRight: 6 }}>●</span>
               {s.label}
-              <span style={{ color: COLORS.textFaint, marginLeft: 8, fontSize: 10 }}>{s.sub}</span>
             </button>
           ))}
         </div>
-      </div>
 
-      <div style={trendsBodyStyle}>
-        <div style={trendsLeftStyle}>
-          <div style={{ color: COLORS.textDim, fontFamily: FONT_MONO, fontSize: 11 }}>
-            30 天合计 · 30 DAY TOTAL
-          </div>
-          <div style={{ ...northStarValueStyle, fontSize: 64, color: cur.color, marginTop: 8 }}>
-            {loading ? '——' : total.toLocaleString()}
-          </div>
-          <div style={{ color: COLORS.textDim, fontSize: 12, fontFamily: FONT_MONO, marginTop: 6 }}>
-            峰值 · {days[peakIdx] || '—'}{' '}
-            <span style={{ color: cur.color }}>{series[peakIdx] ?? 0}</span>
-          </div>
-          <div style={trendsLegendStyle}>
-            <div>
-              <span style={{ color: COLORS.textFaint, marginRight: 6 }}>起期</span>
-              <span style={{ color: COLORS.text, fontFamily: FONT_MONO }}>{days[0] || '—'}</span>
+        <div style={trendsBodyStyle}>
+          <div style={trendsLeftStyle}>
+            <div style={{ color: C.dim, fontSize: 11, fontFamily: FONT_MONO, letterSpacing: 1 }}>
+              30 天合计
             </div>
-            <div>
-              <span style={{ color: COLORS.textFaint, marginRight: 6 }}>止期</span>
-              <span style={{ color: COLORS.text, fontFamily: FONT_MONO }}>
-                {days[days.length - 1] || '—'}
-              </span>
+            <div
+              style={{
+                fontFamily: FONT_MONO,
+                fontSize: 48,
+                color: cur.color,
+                marginTop: 6,
+                letterSpacing: -1,
+                lineHeight: 1,
+                textShadow: `0 0 18px ${cur.color}33`,
+              }}
+            >
+              {loading ? '——' : total.toLocaleString()}
+            </div>
+            <div style={{ color: C.dim, fontSize: 12, fontFamily: FONT_MONO, marginTop: 8 }}>
+              峰值 {days[peakIdx] || '—'}{' '}
+              <span style={{ color: cur.color }}>{series[peakIdx] ?? 0}</span>
+            </div>
+            <div style={{ marginTop: 12, fontSize: 11, color: C.faint, fontFamily: FONT_MONO, letterSpacing: 1 }}>
+              {days[0] || '—'} → {days[days.length - 1] || '—'}
             </div>
           </div>
-        </div>
-        <div style={trendsRightStyle}>
-          <SparkChart series={series} days={days} color={cur.color} max={max} />
+          <div style={trendsRightStyle}>
+            <SparkChart series={series} days={days} color={cur.color} max={max} />
+          </div>
         </div>
       </div>
     </section>
@@ -451,14 +380,10 @@ function SparkChart({
     <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: 'block' }}>
       <defs>
         <linearGradient id="sparkArea" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+          <stop offset="0%" stopColor={color} stopOpacity={0.30} />
           <stop offset="100%" stopColor={color} stopOpacity={0} />
         </linearGradient>
-        <filter id="sparkGlow">
-          <feGaussianBlur stdDeviation="2.5" />
-        </filter>
       </defs>
-      {/* 横向网格 */}
       {[0.25, 0.5, 0.75].map((g) => (
         <line
           key={g}
@@ -466,16 +391,12 @@ function SparkChart({
           x2={W - padX}
           y1={padY + (H - padY * 2) * g}
           y2={padY + (H - padY * 2) * g}
-          stroke="rgba(123,227,211,0.07)"
+          stroke="rgba(120,160,220,0.08)"
           strokeDasharray="2 4"
         />
       ))}
-      {/* 区域 */}
       <path d={areaD} fill="url(#sparkArea)" />
-      {/* 发光主线 */}
-      <path d={pathD} stroke={color} strokeWidth={2.5} fill="none" filter="url(#sparkGlow)" opacity={0.55} />
-      <path d={pathD} stroke={color} strokeWidth={1.5} fill="none" />
-      {/* 数据点 */}
+      <path d={pathD} stroke={color} strokeWidth={1.6} fill="none" />
       {points.map((p, i) => (
         <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
           <rect
@@ -488,9 +409,9 @@ function SparkChart({
           <circle
             cx={p.x}
             cy={p.y}
-            r={hover === i ? 4 : 1.8}
+            r={hover === i ? 4 : 1.6}
             fill={color}
-            stroke={COLORS.bg0}
+            stroke={C.bg0}
             strokeWidth={hover === i ? 2 : 0}
           />
           {hover === i && (
@@ -509,16 +430,16 @@ function SparkChart({
                 y={Math.max(8, p.y - 32)}
                 width={92}
                 height={28}
-                fill="rgba(5,7,13,0.92)"
+                fill="rgba(5,7,13,0.95)"
                 stroke={color}
-                rx={2}
+                rx={4}
               />
               <text
                 x={Math.min(W - 100, Math.max(0, p.x + 8)) + 8}
                 y={Math.max(8, p.y - 32) + 12}
                 fontFamily={FONT_MONO}
                 fontSize={10}
-                fill={COLORS.textDim}
+                fill={C.dim}
               >
                 {days[i]}
               </text>
@@ -540,31 +461,23 @@ function SparkChart({
 }
 
 // ============================================================
-// 漏斗
+// 漏斗 — 简化为水平进度条列表
 // ============================================================
 const FUNNEL_STAGES = [
-  { key: 'registered', label: '注册用户', sub: 'REGISTER', color: COLORS.cyan },
-  { key: 'created_brain', label: '创建大脑', sub: 'CREATE', color: COLORS.blue },
-  { key: 'completed_thinking', label: '完成思考', sub: 'THINK', color: COLORS.amber },
-  { key: 'generated_paper', label: '生成论文', sub: 'PAPER', color: COLORS.pink },
-  { key: 'shared_paper', label: '分享传播', sub: 'SHARE', color: COLORS.violet },
+  { key: 'registered', label: '注册用户' },
+  { key: 'created_brain', label: '创建大脑' },
+  { key: 'completed_thinking', label: '完成思考' },
+  { key: 'generated_paper', label: '生成论文' },
+  { key: 'shared_paper', label: '分享传播' },
 ] as const
 
 function FunnelBlock({ overview }: { overview: OverviewData | null }) {
   const f = overview?.funnel
   const top = f?.registered || 0
   return (
-    <section style={panelStyle}>
-      <div style={panelHeaderStyle}>
-        <div style={sectionLabelStyle}>
-          <span style={sectionLabelDot} />
-          用户转化漏斗 · FUNNEL
-        </div>
-        <div style={{ color: COLORS.textFaint, fontFamily: FONT_MONO, fontSize: 11 }}>
-          注册 → 分享
-        </div>
-      </div>
-      <div style={{ marginTop: 22 }}>
+    <section>
+      <SectionTitle label="用户转化漏斗" sub="注册 → 分享" />
+      <div style={panelStyle}>
         {FUNNEL_STAGES.map((s, i) => {
           const v = f ? (f as any)[s.key] || 0 : 0
           const ratio = top > 0 ? v / top : 0
@@ -572,44 +485,40 @@ function FunnelBlock({ overview }: { overview: OverviewData | null }) {
             i > 0 && f
               ? (f as any)[s.key] / Math.max((f as any)[FUNNEL_STAGES[i - 1].key] || 1, 1)
               : 1
+          const tone = i === 0 ? C.accent : C.accent2
           return (
             <div key={s.key} style={funnelRowStyle}>
               <div style={funnelLabelStyle}>
-                <span style={{ color: s.color, fontFamily: FONT_MONO, marginRight: 8 }}>
+                <span style={{ color: C.faint, fontFamily: FONT_MONO, marginRight: 8, fontSize: 10 }}>
                   {String(i + 1).padStart(2, '0')}
                 </span>
-                <span style={{ color: COLORS.text, fontWeight: 500 }}>{s.label}</span>
-                <span style={{ color: COLORS.textFaint, marginLeft: 8, fontSize: 10, fontFamily: FONT_MONO }}>
-                  {s.sub}
+                <span style={{ color: C.text, fontWeight: 500 }}>{s.label}</span>
+                <span style={{ flex: 1 }} />
+                <span style={{ color: tone, fontFamily: FONT_MONO, fontSize: 14 }}>{v}</span>
+                <span style={{ color: C.faint, fontFamily: FONT_MONO, fontSize: 10, marginLeft: 8 }}>
+                  {(ratio * 100).toFixed(1)}%
                 </span>
+                {i > 0 && (
+                  <span
+                    style={{
+                      color: stepRatio < 0.3 ? C.rose : C.dim,
+                      fontFamily: FONT_MONO,
+                      fontSize: 10,
+                      marginLeft: 8,
+                    }}
+                  >
+                    ↳ {(stepRatio * 100).toFixed(1)}%
+                  </span>
+                )}
               </div>
               <div style={funnelBarBoxStyle}>
                 <div
                   style={{
                     ...funnelBarStyle,
                     width: `${Math.max(ratio * 100, 1.5)}%`,
-                    background: `linear-gradient(90deg, ${s.color}cc, ${s.color}66)`,
-                    boxShadow: `0 0 16px ${s.color}55`,
+                    background: `linear-gradient(90deg, ${tone}, ${tone}66)`,
                   }}
                 />
-                <div style={funnelBarLabelStyle}>
-                  <span style={{ color: s.color, fontFamily: FONT_MONO, fontSize: 14 }}>{v}</span>
-                  <span style={{ color: COLORS.textFaint, fontFamily: FONT_MONO, fontSize: 10, marginLeft: 8 }}>
-                    {(ratio * 100).toFixed(1)}%
-                  </span>
-                  {i > 0 && (
-                    <span
-                      style={{
-                        color: stepRatio < 0.3 ? COLORS.rose : COLORS.textDim,
-                        fontFamily: FONT_MONO,
-                        fontSize: 10,
-                        marginLeft: 10,
-                      }}
-                    >
-                      ↳ {(stepRatio * 100).toFixed(1)}%
-                    </span>
-                  )}
-                </div>
               </div>
             </div>
           )
@@ -631,19 +540,16 @@ function LeaderboardBlock({
 }) {
   const [tab, setTab] = useState<'users' | 'brains' | 'papers'>('users')
   const tabs = [
-    { key: 'users' as const, label: '最活跃用户', sub: 'TOP CONTRIBUTORS' },
-    { key: 'brains' as const, label: '最深大脑', sub: 'DEEPEST BRAINS' },
-    { key: 'papers' as const, label: '最多分享', sub: 'MOST READ' },
+    { key: 'users' as const, label: '最活跃用户' },
+    { key: 'brains' as const, label: '最深大脑' },
+    { key: 'papers' as const, label: '最多分享' },
   ]
 
   return (
-    <section style={panelStyle}>
-      <div style={panelHeaderStyle}>
-        <div style={sectionLabelStyle}>
-          <span style={sectionLabelDot} />
-          贡献排行 · LEADERBOARD
-        </div>
-        <div style={{ display: 'flex', gap: 6 }}>
+    <section>
+      <SectionTitle label="贡献排行" sub="活跃 · 深度 · 影响" />
+      <div style={panelStyle}>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
           {tabs.map((t) => (
             <button
               key={t.key}
@@ -654,47 +560,47 @@ function LeaderboardBlock({
             </button>
           ))}
         </div>
-      </div>
 
-      <div style={{ marginTop: 14 }}>
-        {tab === 'users' && (
-          <BoardList
-            rows={(board?.top_users || []).map((u, i) => ({
-              rank: i + 1,
-              primary: u.username,
-              secondary: `用户 · #${u.id}`,
-              metric: u.brain_count,
-              metricLabel: '个大脑',
-              tone: COLORS.cyan,
-            }))}
-          />
-        )}
-        {tab === 'brains' && (
-          <BoardList
-            rows={(board?.top_brains || []).map((b, i) => ({
-              rank: i + 1,
-              primary: b.name || `大脑 #${b.id}`,
-              secondary: `${b.owner_name} · ${b.state}`,
-              metric: b.ce_count,
-              metricLabel: 'CE',
-              tone: COLORS.amber,
-              onClick: () => navigate(`/brain/${b.id}`),
-            }))}
-          />
-        )}
-        {tab === 'papers' && (
-          <BoardList
-            rows={(board?.top_papers || []).map((p, i) => ({
-              rank: i + 1,
-              primary: p.title || `论文 #${p.id}`,
-              secondary: `${p.owner_name} · 大脑 #${p.brain_id}`,
-              metric: p.view_count,
-              metricLabel: '浏览',
-              tone: COLORS.violet,
-              onClick: () => window.open(`/ainstein/api/public/papers/${p.share_token}/pdf`, '_blank'),
-            }))}
-          />
-        )}
+        <div>
+          {tab === 'users' && (
+            <BoardList
+              rows={(board?.top_users || []).map((u, i) => ({
+                rank: i + 1,
+                primary: u.username,
+                secondary: `用户 #${u.id}`,
+                metric: u.brain_count,
+                metricLabel: '个大脑',
+                tone: C.accent,
+              }))}
+            />
+          )}
+          {tab === 'brains' && (
+            <BoardList
+              rows={(board?.top_brains || []).map((b, i) => ({
+                rank: i + 1,
+                primary: b.name || `大脑 #${b.id}`,
+                secondary: `${b.owner_name} · ${b.state}`,
+                metric: b.ce_count,
+                metricLabel: '认知节点',
+                tone: C.accent2,
+                onClick: () => navigate(`/brain/${b.id}`),
+              }))}
+            />
+          )}
+          {tab === 'papers' && (
+            <BoardList
+              rows={(board?.top_papers || []).map((p, i) => ({
+                rank: i + 1,
+                primary: p.title || `论文 #${p.id}`,
+                secondary: `${p.owner_name} · 大脑 #${p.brain_id}`,
+                metric: p.view_count,
+                metricLabel: '浏览',
+                tone: C.amber,
+                onClick: () => window.open(`/ainstein/api/public/papers/${p.share_token}/pdf`, '_blank'),
+              }))}
+            />
+          )}
+        </div>
       </div>
     </section>
   )
@@ -712,8 +618,8 @@ interface BoardRow {
 function BoardList({ rows }: { rows: BoardRow[] }) {
   if (!rows.length) {
     return (
-      <div style={{ padding: '40px 0', textAlign: 'center', color: COLORS.textFaint, fontFamily: FONT_MONO }}>
-        — 暂无数据 —
+      <div style={{ padding: '40px 0', textAlign: 'center', color: C.faint, fontFamily: FONT_MONO }}>
+        暂无数据
       </div>
     )
   }
@@ -723,6 +629,7 @@ function BoardList({ rows }: { rows: BoardRow[] }) {
         <div
           key={r.rank}
           onClick={r.onClick}
+          className="ainstein-board-row"
           style={{
             ...boardRowStyle,
             cursor: r.onClick ? 'pointer' : 'default',
@@ -743,56 +650,45 @@ function BoardList({ rows }: { rows: BoardRow[] }) {
   )
 }
 
-// ============================================================
-// 工具
-// ============================================================
-function formatClock(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getUTCFullYear()}.${pad(d.getUTCMonth() + 1)}.${pad(d.getUTCDate())} · ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`
-}
-
 function StyleTag() {
   return (
     <style>{`
-      @keyframes ainstein-pulse {
-        0%, 100% { opacity: 0.5; }
-        50% { opacity: 1; }
+      .ainstein-metric-card { transition: border-color .2s ease, transform .2s ease, box-shadow .25s ease; }
+      .ainstein-metric-card:hover {
+        transform: translateY(-2px);
+        border-color: ${C.borderHot};
+        box-shadow: 0 12px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(79,209,197,0.10);
       }
-      @keyframes ainstein-scan {
-        0% { transform: translateY(-100%); }
-        100% { transform: translateY(100%); }
-      }
-      .ad-fade-in {
-        animation: ainstein-fade 0.6s ease-out both;
-      }
-      @keyframes ainstein-fade {
-        from { opacity: 0; transform: translateY(8px); }
-        to { opacity: 1; transform: translateY(0); }
+      .ainstein-board-row { transition: border-color .2s ease, background .2s ease; }
+      .ainstein-board-row:hover {
+        border-color: ${C.borderHot};
+        background: rgba(79, 209, 197, 0.04);
       }
     `}</style>
   )
 }
 
 // ============================================================
-// 样式（CSSProperties）
+// 样式
 // ============================================================
 const pageStyle: CSSProperties = {
   minHeight: '100vh',
-  background: `radial-gradient(ellipse at 20% 0%, ${COLORS.bg1} 0%, ${COLORS.bg0} 60%)`,
-  color: COLORS.text,
+  background: 'radial-gradient(ellipse at top, #0f1729 0%, #0a0e1a 55%, #05070f 100%)',
+  color: C.text,
   fontFamily: FONT_BODY,
   position: 'relative',
   overflow: 'hidden',
-  padding: '0 36px 64px',
 }
 
 const gridBg: CSSProperties = {
   position: 'fixed',
   inset: 0,
   backgroundImage:
-    'linear-gradient(rgba(123,227,211,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(123,227,211,0.05) 1px, transparent 1px)',
+    'linear-gradient(rgba(79,209,197,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(79,209,197,0.04) 1px, transparent 1px)',
   backgroundSize: '64px 64px',
   pointerEvents: 'none',
+  maskImage: 'radial-gradient(ellipse at top, #000 5%, transparent 75%)',
+  WebkitMaskImage: 'radial-gradient(ellipse at top, #000 5%, transparent 75%)',
   zIndex: 0,
 }
 
@@ -800,408 +696,278 @@ const vignette: CSSProperties = {
   position: 'fixed',
   inset: 0,
   background:
-    'radial-gradient(ellipse at center, transparent 30%, rgba(0,0,0,0.55) 100%)',
+    'radial-gradient(circle at 18% 12%, rgba(79,209,197,0.05) 0%, transparent 40%), radial-gradient(circle at 82% 88%, rgba(99,179,237,0.04) 0%, transparent 45%)',
   pointerEvents: 'none',
-  zIndex: 1,
+  zIndex: 0,
 }
 
-const scanlines: CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  backgroundImage:
-    'repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 3px)',
-  pointerEvents: 'none',
-  mixBlendMode: 'overlay',
-  zIndex: 2,
-}
-
-const topBarStyle: CSSProperties = {
+const contentStyle: CSSProperties = {
   position: 'relative',
-  zIndex: 5,
-  height: 56,
+  zIndex: 1,
+  maxWidth: 1280,
+  margin: '0 auto',
+  padding: '32px 40px 80px',
+}
+
+const heroStyle: CSSProperties = {
   display: 'flex',
-  alignItems: 'center',
   justifyContent: 'space-between',
-  borderBottom: `1px solid ${COLORS.border}`,
+  alignItems: 'flex-end',
+  gap: 24,
   marginBottom: 28,
-  fontFamily: FONT_MONO,
-  fontSize: 12,
+  flexWrap: 'wrap',
 }
-
-const crumbBtnStyle: CSSProperties = {
-  background: 'transparent',
-  border: `1px solid ${COLORS.border}`,
-  color: COLORS.textDim,
-  padding: '6px 12px',
-  fontFamily: FONT_MONO,
-  fontSize: 11,
-  letterSpacing: 1.5,
-  cursor: 'pointer',
-  borderRadius: 0,
-}
-
-const topDividerStyle: CSSProperties = {
-  display: 'inline-block',
-  width: 1,
-  height: 14,
-  background: COLORS.border,
-}
-
-const topTagStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 8,
-  color: COLORS.textDim,
-  letterSpacing: 2,
-}
-
-const topDotStyle: CSSProperties = {
-  width: 8,
-  height: 8,
-  borderRadius: '50%',
-  background: COLORS.cyan,
-  boxShadow: `0 0 8px ${COLORS.cyan}`,
-  animation: 'ainstein-pulse 2s ease-in-out infinite',
-}
-
-const topClockStyle: CSSProperties = {
-  color: COLORS.cyan,
-  fontFamily: FONT_MONO,
-  letterSpacing: 1.5,
-  fontSize: 11,
-}
-
-const topUserStyle: CSSProperties = {
-  fontFamily: FONT_MONO,
+const heroTitleStyle: CSSProperties = {
+  fontSize: 38,
+  margin: 0,
+  fontWeight: 700,
+  color: C.text,
   letterSpacing: 1,
-  fontSize: 11,
+  lineHeight: 1.2,
+}
+const heroSubStyle: CSSProperties = {
+  marginTop: 10,
+  color: C.dim,
+  fontSize: 14,
+  lineHeight: 1.7,
+  maxWidth: 620,
 }
 
 const errorBarStyle: CSSProperties = {
-  position: 'relative',
-  zIndex: 5,
   padding: '10px 14px',
   marginBottom: 18,
   background: 'rgba(251,113,133,0.08)',
   border: '1px solid rgba(251,113,133,0.4)',
-  color: COLORS.text,
-  fontFamily: FONT_MONO,
-  fontSize: 12,
+  color: C.text,
+  fontSize: 13,
+  borderRadius: 6,
 }
 
-const sectionLabelStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 10,
-  color: COLORS.textDim,
-  fontFamily: FONT_MONO,
-  fontSize: 11,
-  letterSpacing: 2.5,
-  textTransform: 'uppercase',
-}
-
-const sectionLabelDot: CSSProperties = {
-  width: 6,
-  height: 6,
-  background: COLORS.amber,
-  display: 'inline-block',
-  boxShadow: `0 0 8px ${COLORS.amber}`,
-}
-
-const northStarStyle: CSSProperties = {
-  position: 'relative',
-  zIndex: 5,
-  display: 'grid',
-  gridTemplateColumns: '1fr auto',
-  alignItems: 'center',
-  gap: 32,
-  padding: '36px 40px',
-  background:
-    'linear-gradient(135deg, rgba(246,193,121,0.06) 0%, rgba(123,227,211,0.04) 100%)',
-  border: `1px solid ${COLORS.borderHot}`,
-  marginBottom: 28,
-}
-
-const northStarLeftStyle: CSSProperties = { minWidth: 0 }
-const northStarRightStyle: CSSProperties = {
+const sectionTitleStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  justifyContent: 'center',
+  gap: 12,
+  marginBottom: 16,
+}
+const sectionTitleDot: CSSProperties = {
+  width: 6,
+  height: 6,
+  background: C.accent,
+  boxShadow: `0 0 8px ${C.accent}`,
+  borderRadius: '50%',
+}
+const sectionTitleLine: CSSProperties = {
+  flex: 1,
+  height: 1,
+  background:
+    'linear-gradient(90deg, rgba(79,209,197,0.25), rgba(79,209,197,0.04) 70%, transparent)',
 }
 
-const northStarKickerStyle: CSSProperties = {
-  color: COLORS.textDim,
-  fontSize: 13,
-  letterSpacing: 1.5,
+// 北极星
+const northStarCardStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 32,
+  padding: '28px 28px',
+  background: C.panel,
+  border: `1px solid ${C.borderHot}`,
+  borderRadius: 10,
+  flexWrap: 'wrap',
 }
-
 const northStarValueWrapStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'baseline',
-  gap: 8,
-  marginTop: 8,
+  gap: 6,
+  marginTop: 12,
 }
-
 const northStarValueStyle: CSSProperties = {
-  fontFamily: FONT_DISPLAY,
-  fontSize: 110,
+  fontFamily: FONT_MONO,
+  fontSize: 64,
   lineHeight: 0.9,
-  fontWeight: 400,
-  letterSpacing: -2,
-  color: COLORS.amber,
-  textShadow: `0 0 28px ${COLORS.amber}55`,
+  fontWeight: 500,
+  letterSpacing: -1,
+  color: C.accent,
+  textShadow: `0 0 28px ${C.accent}33`,
 }
-
 const northStarUnitStyle: CSSProperties = {
-  fontFamily: FONT_DISPLAY,
-  fontSize: 32,
-  color: COLORS.textDim,
-  letterSpacing: 4,
+  fontFamily: FONT_MONO,
+  fontSize: 24,
+  color: C.dim,
+  letterSpacing: 2,
 }
-
 const northStarMetaStyle: CSSProperties = {
-  marginTop: 16,
-  color: COLORS.textDim,
+  marginTop: 14,
+  color: C.dim,
   fontSize: 13,
   fontFamily: FONT_MONO,
 }
+const northStarBarWrapStyle: CSSProperties = {
+  flex: 1,
+  minWidth: 240,
+}
+const northStarBarTrackStyle: CSSProperties = {
+  height: 8,
+  background: 'rgba(120, 160, 220, 0.10)',
+  borderRadius: 4,
+  overflow: 'hidden',
+  border: `1px solid ${C.border}`,
+}
+const northStarBarFillStyle: CSSProperties = {
+  height: '100%',
+  background: `linear-gradient(90deg, ${C.accent}, ${C.accent2})`,
+  boxShadow: `0 0 12px ${C.accent}66`,
+  transition: 'width 0.6s ease-out',
+}
 
-const metricsRowStyle: CSSProperties = {
-  position: 'relative',
-  zIndex: 5,
+// 一级指标
+const metricsGridStyle: CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(5, 1fr)',
-  gap: 14,
-  marginBottom: 28,
+  gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+  gap: 18,
 }
-
-function metricCardStyle(tone: string): CSSProperties {
-  return {
-    position: 'relative',
-    padding: '20px 18px 22px',
-    background: COLORS.panel,
-    border: `1px solid ${COLORS.border}`,
-    overflow: 'hidden',
-    transition: 'border-color 0.3s, transform 0.3s',
-  }
+const metricCardStyle: CSSProperties = {
+  padding: 20,
+  background: C.panel,
+  border: `1px solid ${C.border}`,
+  borderRadius: 10,
 }
-
-function metricCornerTL(tone: string): CSSProperties {
-  return {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: 14,
-    height: 14,
-    borderTop: `1px solid ${tone}`,
-    borderLeft: `1px solid ${tone}`,
-  }
-}
-
-function metricCornerBR(tone: string): CSSProperties {
-  return {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 14,
-    height: 14,
-    borderBottom: `1px solid ${tone}`,
-    borderRight: `1px solid ${tone}`,
-  }
-}
-
 const metricLabelStyle: CSSProperties = {
+  fontSize: 12,
+  letterSpacing: 1,
+  color: C.dim,
+  fontWeight: 500,
+}
+const metricValueStyle: CSSProperties = {
   fontFamily: FONT_MONO,
-  fontSize: 10,
-  letterSpacing: 1.6,
-  color: COLORS.textDim,
+  fontSize: 38,
+  fontWeight: 500,
+  margin: '12px 0 6px',
+  letterSpacing: -1,
+  lineHeight: 1.05,
 }
-
-function metricValueStyle(tone: string): CSSProperties {
-  return {
-    fontFamily: FONT_DISPLAY,
-    fontSize: 46,
-    fontWeight: 400,
-    color: tone,
-    margin: '14px 0 6px',
-    letterSpacing: -1,
-    textShadow: `0 0 18px ${tone}33`,
-  }
-}
-
 const metricFootStyle: CSSProperties = {
   fontFamily: FONT_MONO,
   fontSize: 10,
-  color: COLORS.textFaint,
-  letterSpacing: 1,
+  color: C.faint,
+  letterSpacing: 0.5,
 }
 
-const trendsSectionStyle: CSSProperties = {
-  position: 'relative',
-  zIndex: 5,
-  padding: 24,
-  background: COLORS.panel,
-  border: `1px solid ${COLORS.border}`,
-  marginBottom: 28,
+// 趋势 / 通用面板
+const panelStyle: CSSProperties = {
+  padding: 20,
+  background: C.panel,
+  border: `1px solid ${C.border}`,
+  borderRadius: 10,
 }
-
-const trendsHeaderStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  flexWrap: 'wrap',
-  gap: 14,
-}
-
 const trendsTabsStyle: CSSProperties = {
   display: 'flex',
   gap: 6,
   flexWrap: 'wrap',
+  marginBottom: 18,
 }
-
 function trendsTabStyle(active: boolean, color: string): CSSProperties {
   return {
     background: active ? `${color}15` : 'transparent',
-    border: `1px solid ${active ? color : COLORS.border}`,
-    color: active ? COLORS.text : COLORS.textDim,
+    border: `1px solid ${active ? color + '88' : C.border}`,
+    color: active ? C.text : C.dim,
     padding: '6px 12px',
-    fontFamily: FONT_MONO,
-    fontSize: 11,
+    fontFamily: FONT_BODY,
+    fontSize: 12,
     letterSpacing: 1,
     cursor: 'pointer',
+    borderRadius: 4,
   }
 }
-
 const trendsBodyStyle: CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(220px, 280px) 1fr',
+  gridTemplateColumns: 'minmax(200px, 240px) 1fr',
   gap: 24,
-  marginTop: 22,
   alignItems: 'center',
 }
-
 const trendsLeftStyle: CSSProperties = {
   paddingRight: 24,
-  borderRight: `1px solid ${COLORS.border}`,
+  borderRight: `1px solid ${C.border}`,
 }
-
-const trendsLegendStyle: CSSProperties = {
-  marginTop: 14,
-  display: 'flex',
-  gap: 16,
-  fontFamily: FONT_MONO,
-  fontSize: 11,
-  color: COLORS.textDim,
-}
-
 const trendsRightStyle: CSSProperties = { minWidth: 0 }
 
 const twoColStyle: CSSProperties = {
-  position: 'relative',
-  zIndex: 5,
   display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
   gap: 18,
 }
 
-const panelStyle: CSSProperties = {
-  padding: 22,
-  background: COLORS.panel,
-  border: `1px solid ${COLORS.border}`,
-  minHeight: 360,
-}
-
-const panelHeaderStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  flexWrap: 'wrap',
-  gap: 10,
-}
-
+// 漏斗
 const funnelRowStyle: CSSProperties = {
   marginBottom: 14,
 }
-
 const funnelLabelStyle: CSSProperties = {
-  fontSize: 12,
+  fontSize: 13,
   marginBottom: 6,
   display: 'flex',
   alignItems: 'baseline',
 }
-
 const funnelBarBoxStyle: CSSProperties = {
   position: 'relative',
-  height: 30,
-  background: COLORS.panelAlt,
-  border: `1px solid ${COLORS.border}`,
+  height: 8,
+  background: C.panelAlt,
+  border: `1px solid ${C.border}`,
+  borderRadius: 4,
   overflow: 'hidden',
 }
-
 const funnelBarStyle: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
   height: '100%',
   transition: 'width 0.6s ease-out',
+  borderRadius: 4,
 }
 
-const funnelBarLabelStyle: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  display: 'flex',
-  alignItems: 'center',
-  paddingLeft: 12,
-}
-
+// 排行榜
 function leaderTabStyle(active: boolean): CSSProperties {
   return {
-    background: active ? 'rgba(123,227,211,0.08)' : 'transparent',
-    border: `1px solid ${active ? COLORS.cyan : COLORS.border}`,
-    color: active ? COLORS.text : COLORS.textDim,
-    padding: '6px 10px',
-    fontFamily: FONT_MONO,
-    fontSize: 11,
+    background: active ? 'rgba(79,209,197,0.10)' : 'transparent',
+    border: `1px solid ${active ? C.borderHot : C.border}`,
+    color: active ? C.text : C.dim,
+    padding: '6px 12px',
+    fontFamily: FONT_BODY,
+    fontSize: 12,
     letterSpacing: 0.5,
     cursor: 'pointer',
+    borderRadius: 4,
   }
 }
-
 const boardRowStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 14,
   padding: '10px 12px',
-  background: COLORS.panelAlt,
-  border: `1px solid ${COLORS.border}`,
-  transition: 'border-color 0.2s, transform 0.2s',
+  background: C.panelAlt,
+  border: `1px solid ${C.border}`,
+  borderRadius: 6,
 }
-
 function boardRankStyle(rank: number, tone: string): CSSProperties {
   return {
-    width: 36,
-    height: 36,
+    width: 32,
+    height: 32,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    fontFamily: FONT_DISPLAY,
-    fontSize: 16,
-    color: rank <= 3 ? tone : COLORS.textFaint,
-    border: `1px solid ${rank <= 3 ? tone : COLORS.border}`,
+    fontFamily: FONT_MONO,
+    fontSize: 14,
+    color: rank <= 3 ? tone : C.faint,
+    border: `1px solid ${rank <= 3 ? tone + '88' : C.border}`,
     background: rank <= 3 ? `${tone}11` : 'transparent',
+    borderRadius: 4,
   }
 }
-
 const boardPrimaryStyle: CSSProperties = {
-  color: COLORS.text,
+  color: C.text,
   fontSize: 13,
   fontWeight: 500,
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
 }
-
 const boardSecondaryStyle: CSSProperties = {
-  color: COLORS.textFaint,
+  color: C.faint,
   fontSize: 11,
   fontFamily: FONT_MONO,
   marginTop: 2,
@@ -1209,32 +975,16 @@ const boardSecondaryStyle: CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
 }
-
 const boardMetricStyle: CSSProperties = {
-  fontFamily: FONT_DISPLAY,
-  fontSize: 22,
+  fontFamily: FONT_MONO,
+  fontSize: 20,
   letterSpacing: -0.5,
   lineHeight: 1,
 }
-
 const boardMetricLabelStyle: CSSProperties = {
-  color: COLORS.textFaint,
+  color: C.faint,
   fontFamily: FONT_MONO,
   fontSize: 10,
   letterSpacing: 1,
   marginTop: 2,
-}
-
-const footerStyle: CSSProperties = {
-  position: 'relative',
-  zIndex: 5,
-  marginTop: 36,
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  padding: '14px 0',
-  borderTop: `1px solid ${COLORS.border}`,
-  fontSize: 11,
-  letterSpacing: 2,
-  fontFamily: FONT_MONO,
 }

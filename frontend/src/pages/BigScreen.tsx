@@ -502,65 +502,70 @@ export default function BigScreen() {
         active="bigscreen"
         floating
         rightSlot={
-          <span style={{ letterSpacing: 2 }}>
+          <span style={{ letterSpacing: 1 }}>
             <span style={{ color: '#4fd1c5' }}>● </span>
-            实时拓扑 · LIVE FEED
+            <span style={{ color: '#dce6f5' }}>实时拓扑</span>
           </span>
         }
       />
 
       <div style={{
-        position: 'absolute', top: 88, left: '50%', transform: 'translateX(-50%)',
-        color: 'rgba(220, 235, 255, 0.9)', fontSize: 16, fontWeight: 500,
-        letterSpacing: 6,
-        fontFamily: '"Inter", "Helvetica Neue", sans-serif',
-        textShadow: '0 0 24px rgba(120, 180, 255, 0.45)',
+        position: 'absolute', top: 80, left: '50%', transform: 'translateX(-50%)',
+        color: '#dce6f5', fontSize: 15, fontWeight: 500,
+        letterSpacing: 5,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif',
+        textShadow: '0 0 20px rgba(79, 209, 197, 0.35)',
         pointerEvents: 'none',
       }}>
         硅基大脑 · 态势全景
       </div>
 
       <div style={{
-        position: 'absolute', top: 116, left: '50%', transform: 'translateX(-50%)',
-        width: 120, height: 1,
-        background: 'linear-gradient(90deg, transparent, rgba(150,200,255,0.5), transparent)',
+        position: 'absolute', top: 108, left: '50%', transform: 'translateX(-50%)',
+        width: 100, height: 1,
+        background: 'linear-gradient(90deg, transparent, rgba(79,209,197,0.5), transparent)',
         pointerEvents: 'none',
       }} />
 
       <div style={{
         position: 'absolute', bottom: 32, left: 32,
-        color: '#a8bdd8', fontSize: 12, fontFamily: '"JetBrains Mono", "Menlo", monospace',
-        background: 'rgba(15, 22, 38, 0.55)', borderRadius: 6, padding: '14px 20px',
-        border: '1px solid rgba(120, 160, 220, 0.18)',
-        backdropFilter: 'blur(10px)',
+        color: '#dce6f5', fontSize: 12,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif',
+        background: 'rgba(10, 14, 26, 0.85)',
+        borderRadius: 10,
+        padding: '16px 20px',
+        border: '1px solid rgba(120, 160, 220, 0.15)',
+        backdropFilter: 'blur(14px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(14px) saturate(140%)',
         boxShadow: '0 4px 24px rgba(0, 0, 0, 0.4)',
         pointerEvents: 'none',
         letterSpacing: 0.5,
+        minWidth: 180,
       }}>
-        <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ width: 6, height: 6, background: '#90cdf4', borderRadius: 1, display: 'inline-block' }} />
-          <span style={{ color: '#7a8da8' }}>大脑总数</span>
-          <span style={{ color: '#e0ecff', fontWeight: 500 }}>{stats.total}</span>
+        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 6, height: 6, background: '#63b3ed', borderRadius: '50%', display: 'inline-block', boxShadow: '0 0 6px #63b3ed' }} />
+          <span style={{ color: '#7a8da8', flex: 1 }}>大脑总数</span>
+          <span style={{ color: '#dce6f5', fontWeight: 600, fontFamily: '"JetBrains Mono", monospace' }}>{stats.total}</span>
         </div>
-        <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ width: 6, height: 6, background: '#7be3d3', borderRadius: 1, display: 'inline-block' }} />
-          <span style={{ color: '#7a8da8' }}>活跃中  </span>
-          <span style={{ color: '#7be3d3', fontWeight: 500 }}>{stats.active}</span>
+        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 6, height: 6, background: '#4fd1c5', borderRadius: '50%', display: 'inline-block', boxShadow: '0 0 6px #4fd1c5' }} />
+          <span style={{ color: '#7a8da8', flex: 1 }}>思考中</span>
+          <span style={{ color: '#4fd1c5', fontWeight: 600, fontFamily: '"JetBrains Mono", monospace' }}>{stats.active}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ width: 6, height: 6, background: '#c3a5e8', borderRadius: 1, display: 'inline-block' }} />
-          <span style={{ color: '#7a8da8' }}>认知元素</span>
-          <span style={{ color: '#c3a5e8', fontWeight: 500 }}>{stats.totalCE}</span>
+          <span style={{ width: 6, height: 6, background: '#f6c179', borderRadius: '50%', display: 'inline-block', boxShadow: '0 0 6px #f6c179' }} />
+          <span style={{ color: '#7a8da8', flex: 1 }}>认知节点</span>
+          <span style={{ color: '#f6c179', fontWeight: 600, fontFamily: '"JetBrains Mono", monospace' }}>{stats.totalCE}</span>
         </div>
       </div>
 
       <div style={{
         position: 'absolute', bottom: 32, right: 32,
-        color: 'rgba(150, 180, 220, 0.4)', fontSize: 10,
+        color: 'rgba(122, 141, 168, 0.6)', fontSize: 10,
         fontFamily: '"JetBrains Mono", monospace', letterSpacing: 2,
         pointerEvents: 'none',
       }}>
-        TOPOLOGY · LIVE FEED · 实时拓扑
+        实时拓扑
       </div>
 
       {hoveredBrain && (
@@ -568,15 +573,16 @@ export default function BigScreen() {
           position: 'absolute',
           left: tooltipPos.x,
           top: tooltipPos.y,
-          background: 'rgba(15, 22, 38, 0.92)',
-          border: '1px solid rgba(120, 160, 220, 0.35)',
-          borderRadius: 6,
+          background: 'rgba(10, 14, 26, 0.92)',
+          border: '1px solid rgba(79, 209, 197, 0.30)',
+          borderRadius: 10,
           padding: '14px 18px',
           color: '#dce6f5',
           fontSize: 12,
-          fontFamily: '"JetBrains Mono", "Menlo", monospace',
+          fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif',
           pointerEvents: 'none',
-          backdropFilter: 'blur(10px)',
+          backdropFilter: 'blur(14px) saturate(140%)',
+          WebkitBackdropFilter: 'blur(14px) saturate(140%)',
           boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
           maxWidth: 320,
           zIndex: 999,
@@ -584,21 +590,22 @@ export default function BigScreen() {
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6, color: '#f0f6ff', letterSpacing: 0.5 }}>
             {hoveredBrain.name}
           </div>
-          <div style={{ marginBottom: 8, color: '#8aa0c0', fontSize: 11, lineHeight: 1.5 }}>
-            {hoveredBrain.seed_question?.slice(0, 70)}{(hoveredBrain.seed_question?.length || 0) > 70 ? '…' : ''}
+          <div style={{ marginBottom: 10, color: '#7a8da8', fontSize: 12, lineHeight: 1.6, fontStyle: 'italic' }}>
+            「{hoveredBrain.seed_question?.slice(0, 70)}{(hoveredBrain.seed_question?.length || 0) > 70 ? '…' : ''}」
           </div>
           <div style={{
-            display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 14px',
-            paddingTop: 8, borderTop: '1px solid rgba(120,160,220,0.15)',
+            display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 14px',
+            paddingTop: 10, borderTop: '1px dashed rgba(120,160,220,0.18)',
+            fontFamily: '"JetBrains Mono", monospace', fontSize: 11,
           }}>
-            <span><span style={{ color: '#6a7a96' }}>状态</span> <b style={{ color: STATE_COLORS[hoveredBrain.state] || '#fff' }}>{hoveredBrain.state}</b></span>
-            <span><span style={{ color: '#6a7a96' }}>类型</span> {hoveredBrain.brain_type || 'standalone'}</span>
-            <span><span style={{ color: '#6a7a96' }}>思考</span> {hoveredBrain.think_count ?? 0}</span>
-            <span><span style={{ color: '#6a7a96' }}>认知元素</span> {hoveredBrain.ce_count ?? 0}</span>
-            <span><span style={{ color: '#6a7a96' }}>智能体</span> {hoveredBrain.agent_count ?? 0}</span>
-            <span><span style={{ color: '#6a7a96' }}>归属</span> {hoveredBrain.owner_username || '—'}</span>
+            <span><span style={{ color: '#475569' }}>状态 </span><b style={{ color: STATE_COLORS[hoveredBrain.state] || '#dce6f5' }}>{hoveredBrain.state}</b></span>
+            <span><span style={{ color: '#475569' }}>类型 </span>{hoveredBrain.brain_type || 'standalone'}</span>
+            <span><span style={{ color: '#475569' }}>思考 </span>{hoveredBrain.think_count ?? 0}</span>
+            <span><span style={{ color: '#475569' }}>认知 </span>{hoveredBrain.ce_count ?? 0}</span>
+            <span><span style={{ color: '#475569' }}>智能体 </span>{hoveredBrain.agent_count ?? 0}</span>
+            <span><span style={{ color: '#475569' }}>归属 </span>{hoveredBrain.owner_username || '—'}</span>
           </div>
-          <div style={{ marginTop: 8, color: '#5a6a86', fontSize: 10 }}>
+          <div style={{ marginTop: 10, color: '#475569', fontSize: 10, fontFamily: '"JetBrains Mono", monospace' }}>
             创建于 {hoveredBrain.created_at?.slice(0, 16).replace('T', ' ')}
           </div>
         </div>

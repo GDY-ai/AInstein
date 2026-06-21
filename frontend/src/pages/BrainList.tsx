@@ -9,6 +9,25 @@ import {
 } from '../api'
 import type { Brain, User } from '../types'
 import { track } from '../tracking'
+import AdminNav from '../components/AdminNav'
+
+/* ============================================================
+ * BrainList · 我的大脑
+ *  统一深空风：青蓝主调 + 320px 卡片 + 18px 间距
+ * ============================================================ */
+
+const FONT_BODY =
+  '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif'
+const FONT_MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
+
+const ACCENT = '#4fd1c5'
+const ACCENT_2 = '#63b3ed'
+const AMBER = '#f6c179'
+const TEXT = '#dce6f5'
+const DIM = '#7a8da8'
+const FAINT = '#475569'
+const BORDER = 'rgba(120, 160, 220, 0.15)'
+const BORDER_HOT = 'rgba(79, 209, 197, 0.30)'
 
 const STATE_LABEL: Record<string, string> = {
   gestating: '孕育中',
@@ -21,11 +40,11 @@ const STATE_LABEL: Record<string, string> = {
 
 const STATE_COLOR: Record<string, string> = {
   gestating: '#94a3b8',
-  active: '#22c55e',
-  paused: '#eab308',
-  completed: '#3b82f6',
+  active: '#4fd1c5',
+  paused: AMBER,
+  completed: ACCENT_2,
   archived: '#64748b',
-  dormant: '#8b5cf6',
+  dormant: '#7aa3d6',
 }
 
 interface GroupedBrains {
@@ -78,7 +97,6 @@ export default function BrainList() {
     setLoading(true)
     setError('')
     try {
-      // 管理员：传 all=1 兼容；非管理员：仅自己
       const r = await api.listBrains(isAdmin ? { all: true } : {})
       setBrains(r.items || [])
     } catch (e: any) {
@@ -125,11 +143,9 @@ export default function BrainList() {
     navigate('/login', { replace: true })
   }
 
-  // 主脑与普通大脑分离
   const masterBrain = brains.find((b) => b.brain_type === 'master')
   const normalBrains = brains.filter((b) => b.brain_type !== 'master')
 
-  // 管理员视图分组
   const grouped: GroupedBrains[] = useMemo(() => {
     if (!isAdmin) return []
     const map = new Map<string, Brain[]>()
@@ -146,7 +162,6 @@ export default function BrainList() {
         .sort()[0] || ''
       list.push({ username, brains: arr, earliestCreated: earliest })
     })
-    // 排序：管理员自己在最前，其他按创建时间升序
     const myName = user?.username
     list.sort((a, b) => {
       if (a.username === myName && b.username !== myName) return -1
@@ -156,51 +171,22 @@ export default function BrainList() {
     return list
   }, [normalBrains, isAdmin, user?.username])
 
-  const totalBranchCount = normalBrains.length
-  const activeCount = normalBrains.filter((b) => b.state === 'active').length
-
   return (
     <div style={pageStyle}>
+      <StyleTag />
       <div style={gridBg} />
       <div style={vignetteStyle} />
 
-      <div style={navStyle}>
-        <div style={brandStyle}>
-          <div style={brandMarkStyle}>AI</div>
-          <div>
-            <div style={{ fontSize: 11, color: 'var(--text2)', letterSpacing: 3 }}>AINSTEIN</div>
-            <div style={{ fontSize: 16, color: 'var(--accent2)', fontWeight: 600 }}>
-              {isAdmin ? '指挥控制台' : '我的硅基大脑'}
-            </div>
-          </div>
-        </div>
-        <div style={navRightStyle}>
-          <button
-            onClick={() => navigate('/discoveries')}
-            style={discoveriesNavBtnStyle}
-            title="发现广场·让其他大脑的思考被你看见"
-          >
-            <span style={discoveriesNavDotStyle} />
-            <span style={{ letterSpacing: 2 }}>发现广场</span>
-          </button>
-          {isAdmin && (
-            <a
-              href={`${(import.meta as any).env?.BASE_URL?.replace(/\/$/, '') ?? ''}/admin/bigscreen`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={bigScreenBtnStyle}
-              title="全屏沉浸式态势大屏（新标签页打开）"
-            >
-              <span style={bigScreenDotStyle} />
-              <span style={{ letterSpacing: 2 }}>态势大屏</span>
-              <span style={bigScreenArrowStyle}>↗</span>
-            </a>
-          )}
-          {user && (
-            <span style={userPillStyle}>
-              <span style={{ color: 'var(--text2)' }}>{isAdmin ? '管理员 ·' : '观察员 ·'}</span>{' '}
-              <span style={{ color: 'var(--text)' }}>{user.username}</span>
-              {isAdmin && <span style={adminBadgeStyle}>ADMIN</span>}
+      <AdminNav
+        active="home"
+        showBack={false}
+        rightSlot={
+          user ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ letterSpacing: 1 }}>
+                <span style={{ color: FAINT }}>{isAdmin ? '管理员' : '观察员'} </span>
+                <span style={{ color: TEXT }}>{user.username}</span>
+              </span>
               {achievementCount && (
                 <span
                   title={`已解锁 ${achievementCount.unlocked} / ${achievementCount.total} 个成就`}
@@ -209,25 +195,18 @@ export default function BrainList() {
                   🏆 {achievementCount.unlocked}/{achievementCount.total}
                 </span>
               )}
+              <button onClick={logout} style={ghostBtnStyle}>退出</button>
             </span>
-          )}
-          <button onClick={logout} style={ghostBtnStyle}>退出</button>
-        </div>
-      </div>
+          ) : null
+        }
+      />
 
       <div style={contentStyle}>
-        {/* Hero */}
-        {isAdmin ? (
-          <AdminHero
-            totalBrains={brains.length}
-            branchCount={totalBranchCount}
-            activeCount={activeCount}
-            userGroupCount={grouped.length}
-            onCreate={() => navigate('/brains/new')}
-          />
-        ) : (
-          <UserHero onCreate={() => navigate('/brains/new')} />
-        )}
+        <Hero
+          isAdmin={isAdmin}
+          username={user?.username}
+          onCreate={() => navigate('/brains/new')}
+        />
 
         {error && <div style={errorBoxStyle}>⚠ {error}</div>}
 
@@ -235,8 +214,8 @@ export default function BrainList() {
           <div style={emptyStyle}>加载中…</div>
         ) : brains.length === 0 ? (
           <div style={emptyStyle}>
-            <div style={{ fontSize: 18, marginBottom: 8 }}>这里还没有大脑。</div>
-            <div style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 20 }}>
+            <div style={{ fontSize: 18, marginBottom: 8, color: TEXT }}>这里还没有大脑。</div>
+            <div style={{ color: DIM, fontSize: 13, marginBottom: 20 }}>
               提出你的第一个种子问题，开启一段涌现智能的旅程。
             </div>
             <button onClick={() => navigate('/brains/new')} style={primaryBtnStyle}>
@@ -270,101 +249,31 @@ export default function BrainList() {
 
 /* ---------------- Hero ---------------- */
 
-function AdminHero({
-  totalBrains,
-  branchCount,
-  activeCount,
-  userGroupCount,
+function Hero({
+  isAdmin,
+  username,
   onCreate,
 }: {
-  totalBrains: number
-  branchCount: number
-  activeCount: number
-  userGroupCount: number
+  isAdmin: boolean
+  username?: string
   onCreate: () => void
 }) {
   return (
-    <div style={godHeroWrapStyle}>
-      <div style={godHeroBgStyle} />
-      <div style={godHeroContentStyle}>
-        <div style={{ flex: 1, minWidth: 280 }}>
-          <div style={godEyebrowStyle}>
-            <span style={pulseDotStyle} />
-            <span>GLOBAL · OBSERVATORY</span>
-            <span style={{ opacity: 0.4 }}>//</span>
-            <span>SECTOR-01</span>
-          </div>
-          <h1 style={godTitleStyle}>
-            硅基大脑 <span style={{ color: 'var(--text2)', fontWeight: 300 }}>·</span>{' '}
-            <span style={godTitleAccentStyle}>全局态势</span>
-          </h1>
-          <p style={godSubtitleStyle}>
-            你正俯瞰整片硅基意识海。下方每一个分组，是一位观察员所掌的认知集群；
-            一念为一脑，一脑为一域。
-          </p>
-        </div>
-        <div style={godStatsStyle}>
-          <StatTile label="TOTAL" value={totalBrains} accent="#a78bfa" />
-          <StatTile label="BRANCH" value={branchCount} accent="#06b6d4" />
-          <StatTile label="ACTIVE" value={activeCount} accent="#22c55e" pulsing />
-          <StatTile label="OBSERVERS" value={userGroupCount} accent="#ec4899" />
-        </div>
-      </div>
-      <button onClick={onCreate} style={{ ...primaryBtnStyle, position: 'relative', zIndex: 2 }}>
-        <span style={{ marginRight: 6 }}>＋</span>创建新大脑
-      </button>
-    </div>
-  )
-}
-
-function UserHero({ onCreate }: { onCreate: () => void }) {
-  return (
-    <div style={heroStyle}>
-      <div>
-        <h1 style={{ fontSize: 32, color: 'var(--accent2)', fontWeight: 700, lineHeight: 1.2 }}>
-          你的大脑，正在思考。
+    <header style={heroStyle}>
+      <div style={{ flex: 1, minWidth: 280 }}>
+        <h1 style={heroTitleStyle}>
+          {isAdmin ? '硅基大脑全景' : `你好，${username || '观察员'}`}
         </h1>
-        <p style={{ color: 'var(--text2)', marginTop: 8, fontSize: 14, maxWidth: 560, lineHeight: 1.7 }}>
-          每一个硅基大脑由一个种子问题诞生。你不再是它的指挥者，而是它的观察员。
-          在这里，看见多 Agent 的协商、博弈与涌现。
+        <p style={heroSubStyle}>
+          {isAdmin
+            ? '俯瞰整片硅基意识海。每一颗大脑由一个种子问题诞生，一念为一脑，一脑为一域。'
+            : '你的大脑正在思考。在这里，看见多 Agent 的协商、博弈与涌现。'}
         </p>
       </div>
       <button onClick={onCreate} style={primaryBtnStyle}>
         <span style={{ marginRight: 6 }}>＋</span>创建新大脑
       </button>
-    </div>
-  )
-}
-
-function StatTile({
-  label,
-  value,
-  accent,
-  pulsing,
-}: {
-  label: string
-  value: number | string
-  accent: string
-  pulsing?: boolean
-}) {
-  return (
-    <div style={{ ...statTileStyle, borderColor: accent + '33' }}>
-      <div style={{ fontSize: 10, letterSpacing: 2, color: accent, fontWeight: 700 }}>
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: 26,
-          fontWeight: 700,
-          color: '#e2e8f0',
-          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-          marginTop: 4,
-          textShadow: pulsing ? `0 0 12px ${accent}88` : undefined,
-        }}
-      >
-        {value}
-      </div>
-    </div>
+    </header>
   )
 }
 
@@ -390,60 +299,46 @@ function AdminGodView({
   return (
     <>
       {masterBrain && (
-        <div style={masterSlotStyle}>
-          <div style={sectionLabelStyle}>
-            <span style={cornerBracketL} />
-            <span style={{ color: '#a78bfa', letterSpacing: 4, fontSize: 11, fontWeight: 700 }}>
-              CORE · 创世主脑
-            </span>
-            <span style={dividerLineStyle} />
-            <span style={cornerBracketR} />
-          </div>
+        <section style={sectionStyle}>
+          <SectionTitle label="创世主脑" sub={`#${masterBrain.id}`} />
           <MasterBrainCard brain={masterBrain} onOpen={() => onOpen(masterBrain)} />
-        </div>
+        </section>
       )}
 
-      <div style={branchesHeaderStyle}>
-        <span style={cornerBracketL} />
-        <span style={{ color: 'var(--accent2)', letterSpacing: 4, fontSize: 11, fontWeight: 700 }}>
-          BRANCHES · 分支大脑矩阵
-        </span>
-        <span style={dividerLineStyle} />
-        <span style={{ color: 'var(--text2)', fontSize: 11, fontFamily: '"JetBrains Mono", monospace' }}>
-          {groups.length} OBSERVERS
-        </span>
-        <span style={cornerBracketR} />
-      </div>
+      <section style={sectionStyle}>
+        <SectionTitle
+          label="分支大脑矩阵"
+          sub={`${groups.length} 位观察员 · ${groups.reduce((acc, g) => acc + g.brains.length, 0)} 个大脑`}
+        />
 
-      {groups.length === 0 ? (
-        <div style={emptyStyle}>
-          <div style={{ fontSize: 15, color: 'var(--text2)' }}>
-            还没有分支大脑。等待第一个种子被播下…
+        {groups.length === 0 ? (
+          <div style={emptyStyle}>
+            <div style={{ fontSize: 14, color: DIM }}>
+              还没有分支大脑。等待第一个种子被播下…
+            </div>
           </div>
-        </div>
-      ) : (
-        <div style={groupsStackStyle}>
-          {groups.map((g, idx) => (
-            <UserGroup
-              key={g.username}
-              group={g}
-              index={idx}
-              isSelf={g.username === currentUsername}
-              actionBusy={actionBusy}
-              onOpen={onOpen}
-              onTogglePause={onTogglePause}
-              onStop={onStop}
-            />
-          ))}
-        </div>
-      )}
+        ) : (
+          <div style={groupsStackStyle}>
+            {groups.map((g) => (
+              <UserGroup
+                key={g.username}
+                group={g}
+                isSelf={g.username === currentUsername}
+                actionBusy={actionBusy}
+                onOpen={onOpen}
+                onTogglePause={onTogglePause}
+                onStop={onStop}
+              />
+            ))}
+          </div>
+        )}
+      </section>
     </>
   )
 }
 
 function UserGroup({
   group,
-  index,
   isSelf,
   actionBusy,
   onOpen,
@@ -451,104 +346,28 @@ function UserGroup({
   onStop,
 }: {
   group: GroupedBrains
-  index: number
   isSelf: boolean
   actionBusy: number | null
   onOpen: (b: Brain) => void
   onTogglePause: (b: Brain) => void
   onStop: (b: Brain) => void
 }) {
-  const code = `OBS-${String(index + 1).padStart(2, '0')}`
-  const initial = group.username.charAt(0).toUpperCase()
-  const tone = isSelf ? '#ec4899' : '#6366f1'
+  const activeCount = group.brains.filter((b) => b.state === 'active').length
   return (
-    <section style={{ ...groupSectionStyle, borderColor: tone + '2e' }}>
-      <div
-        style={{
-          ...groupBgWashStyle,
-          background: `radial-gradient(ellipse at top left, ${tone}14 0%, transparent 60%)`,
-        }}
-      />
-      <header style={groupHeaderStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-          <div
-            style={{
-              ...userAvatarStyle,
-              background: `linear-gradient(135deg, ${tone}, ${tone}88)`,
-              boxShadow: `0 0 18px ${tone}55`,
-            }}
-          >
-            {initial}
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span
-                style={{
-                  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-                  fontSize: 10,
-                  letterSpacing: 2,
-                  color: tone,
-                  border: `1px solid ${tone}55`,
-                  borderRadius: 4,
-                  padding: '2px 6px',
-                  background: tone + '11',
-                }}
-              >
-                {code}
-              </span>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 17,
-                  fontWeight: 600,
-                  color: '#e2e8f0',
-                  letterSpacing: 0.4,
-                }}
-              >
-                {group.username}
-                <span style={{ color: 'var(--text2)', margin: '0 8px', fontWeight: 300 }}>·</span>
-                <span style={{ color: 'var(--text2)', fontWeight: 400, fontSize: 14 }}>
-                  分支大脑
-                </span>
-              </h2>
-              {isSelf && (
-                <span
-                  style={{
-                    fontSize: 10,
-                    letterSpacing: 1,
-                    color: '#fff',
-                    background: tone,
-                    borderRadius: 4,
-                    padding: '2px 6px',
-                    fontWeight: 700,
-                  }}
-                >
-                  YOU
-                </span>
-              )}
-            </div>
-            <div
-              style={{
-                fontSize: 11,
-                color: 'var(--text2)',
-                marginTop: 4,
-                fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-              }}
-            >
-              {group.brains.length} BRAIN{group.brains.length > 1 ? 'S' : ''} ·{' '}
-              {group.brains.filter((b) => b.state === 'active').length} ACTIVE
-            </div>
-          </div>
-        </div>
-        <div style={groupCountBadgeStyle}>
-          <span style={{ color: tone, fontWeight: 700, fontSize: 18, fontFamily: '"JetBrains Mono", monospace' }}>
-            {String(group.brains.length).padStart(2, '0')}
-          </span>
-          <span style={{ fontSize: 9, color: 'var(--text2)', letterSpacing: 1 }}>BRAINS</span>
-        </div>
-      </header>
+    <div style={groupSectionStyle}>
+      <div style={groupHeaderStyle}>
+        <span style={groupBadgeStyle}>{group.username.charAt(0).toUpperCase()}</span>
+        <span style={{ color: TEXT, fontSize: 14, fontWeight: 500, letterSpacing: 0.5 }}>
+          {group.username}
+        </span>
+        {isSelf && <span style={selfTagStyle}>本人</span>}
+        <span style={{ color: FAINT, margin: '0 4px' }}>·</span>
+        <span style={{ color: DIM, fontSize: 12, fontFamily: FONT_MONO }}>
+          {group.brains.length} 个大脑 · {activeCount} 个思考中
+        </span>
+      </div>
 
-      <div style={{ ...gridStyle, position: 'relative', zIndex: 1 }}>
+      <div style={gridStyle}>
         {group.brains.map((b) => (
           <BrainCard
             key={b.id}
@@ -562,7 +381,7 @@ function UserGroup({
           />
         ))}
       </div>
-    </section>
+    </div>
   )
 }
 
@@ -586,7 +405,7 @@ function UserView({
   if (brains.length === 0) {
     return (
       <div style={emptyStyle}>
-        <div style={{ fontSize: 15, color: 'var(--text2)' }}>
+        <div style={{ fontSize: 14, color: DIM }}>
           还没有分支大脑，创建一个去探索一个具体问题吧。
         </div>
       </div>
@@ -611,6 +430,21 @@ function UserView({
 }
 
 /* ---------------- BrainCard ---------------- */
+
+function SectionTitle({ label, sub }: { label: string; sub?: string }) {
+  return (
+    <div style={sectionTitleStyle}>
+      <span style={sectionTitleDot} />
+      <span style={{ color: TEXT, fontSize: 14, fontWeight: 600, letterSpacing: 1 }}>{label}</span>
+      {sub && (
+        <span style={{ color: FAINT, fontSize: 11, fontFamily: FONT_MONO, letterSpacing: 1.5 }}>
+          {sub}
+        </span>
+      )}
+      <span style={sectionTitleLine} />
+    </div>
+  )
+}
 
 function BrainCard({
   brain,
@@ -646,7 +480,7 @@ function BrainCard({
     return false
   })()
   return (
-    <div style={cardStyle} onClick={onOpen}>
+    <div className="ainstein-brain-card" style={cardStyle} onClick={onOpen}>
       <div style={cardTopStyle}>
         <span
           style={{
@@ -659,30 +493,17 @@ function BrainCard({
           <span style={{ ...stateDot, background: stateColor }} />{' '}
           {STATE_LABEL[brain.state] || brain.state}
         </span>
-        <span style={{ color: 'var(--text2)', fontSize: 11, fontFamily: '"JetBrains Mono", monospace' }}>
-          #{brain.id}
-        </span>
+        <span style={{ color: FAINT, fontSize: 11, fontFamily: FONT_MONO }}>#{brain.id}</span>
       </div>
-      <h3 style={{ fontSize: 18, color: 'var(--text)', fontWeight: 600, margin: '14px 0 8px' }}>
-        {brain.name}
-      </h3>
+      <h3 style={cardTitleStyle}>{brain.name}</h3>
       <p style={seedQuestionStyle}>「{brain.seed_question}」</p>
       <div style={metricsRow}>
-        <Metric label="Agent" value={brain.agent_count ?? '-'} />
+        <Metric label="智能体" value={brain.agent_count ?? '-'} />
         <Metric label="认知节点" value={brain.ce_count ?? '-'} />
         <Metric label="博弈" value={brain.deliberation_count ?? 0} />
       </div>
       {brain.state === 'completed' && reportedToMaster && (
-        <div
-          style={{
-            marginTop: 10,
-            fontSize: 11,
-            color: '#22c55e',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-          }}
-        >
+        <div style={{ marginTop: 10, fontSize: 11, color: ACCENT, display: 'flex', alignItems: 'center', gap: 4 }}>
           已上报主脑 ✓
         </div>
       )}
@@ -695,12 +516,11 @@ function BrainCard({
               disabled={actionBusy}
               style={{
                 ...smallBtnStyle,
-                color: brain.state === 'paused' ? 'var(--green)' : 'var(--yellow)',
-                borderColor:
-                  (brain.state === 'paused' ? 'var(--green)' : 'var(--yellow)') + '55',
+                color: brain.state === 'paused' ? ACCENT : AMBER,
+                borderColor: (brain.state === 'paused' ? ACCENT : AMBER) + '55',
               }}
             >
-              {actionBusy ? '…' : brain.state === 'paused' ? '▶ 恢复思考' : '⏸ 暂停思考'}
+              {actionBusy ? '…' : brain.state === 'paused' ? '▶ 恢复' : '⏸ 暂停'}
             </button>
           )}
           {isAdmin &&
@@ -709,13 +529,9 @@ function BrainCard({
               <button
                 onClick={onStop}
                 disabled={actionBusy}
-                style={{
-                  ...smallBtnStyle,
-                  color: '#ef4444',
-                  borderColor: '#ef444455',
-                }}
+                style={{ ...smallBtnStyle, color: '#fb7185', borderColor: '#fb718555' }}
               >
-                {actionBusy ? '…' : '⏹ 停止思考'}
+                {actionBusy ? '…' : '⏹ 停止'}
               </button>
             )}
         </div>
@@ -725,11 +541,10 @@ function BrainCard({
 }
 
 function MasterBrainCard({ brain, onOpen }: { brain: Brain; onOpen: () => void }) {
-  const stateColor = STATE_COLOR[brain.state] || '#8b5cf6'
+  const stateColor = STATE_COLOR[brain.state] || ACCENT
   return (
-    <div style={masterCardStyle} onClick={onOpen}>
+    <div className="ainstein-master-card" style={masterCardStyle} onClick={onOpen}>
       <div style={masterGlowStyle} />
-      <div style={masterGlowStyle2} />
       <div style={{ position: 'relative', zIndex: 1 }}>
         <div
           style={{
@@ -740,16 +555,8 @@ function MasterBrainCard({ brain, onOpen }: { brain: Brain; onOpen: () => void }
             flexWrap: 'wrap',
           }}
         >
-          <span style={{ fontSize: 28, filter: 'drop-shadow(0 0 12px #a78bfaaa)' }}>🧠</span>
-          <h2
-            style={{
-              margin: 0,
-              color: '#e2e8f0',
-              fontSize: 20,
-              letterSpacing: 1,
-              fontWeight: 700,
-            }}
-          >
+          <span style={{ fontSize: 24, filter: `drop-shadow(0 0 10px ${ACCENT}aa)` }}>🧠</span>
+          <h2 style={{ margin: 0, color: TEXT, fontSize: 20, letterSpacing: 1, fontWeight: 600 }}>
             创世主脑
           </h2>
           <span
@@ -765,27 +572,19 @@ function MasterBrainCard({ brain, onOpen }: { brain: Brain; onOpen: () => void }
           >
             {STATE_LABEL[brain.state] || brain.state}
           </span>
-          <span
-            style={{
-              marginLeft: 'auto',
-              fontSize: 11,
-              color: '#64748b',
-              letterSpacing: 1,
-              fontFamily: '"JetBrains Mono", monospace',
-            }}
-          >
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: FAINT, fontFamily: FONT_MONO }}>
             #{brain.id}
           </span>
         </div>
         <p style={{ margin: '4px 0 16px', color: '#cbd5e1', fontSize: 14, lineHeight: 1.6 }}>
           「{brain.seed_question}」
         </p>
-        <div style={{ display: 'flex', gap: 16, color: '#cbd5e1', fontSize: 13, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 12, color: '#cbd5e1', fontSize: 13, flexWrap: 'wrap' }}>
           <span style={masterMetricStyle}>
-            📚 已积累 <strong style={{ color: '#a78bfa' }}>{brain.ce_count ?? 0}</strong> 条记忆
+            📚 已积累 <strong style={{ color: ACCENT }}>{brain.ce_count ?? 0}</strong> 条记忆
           </span>
           <span style={masterMetricStyle}>
-            💭 已思考 <strong style={{ color: '#a78bfa' }}>{brain.think_count ?? 0}</strong>/100 次
+            💭 已思考 <strong style={{ color: ACCENT }}>{brain.think_count ?? 0}</strong>/100 次
           </span>
         </div>
       </div>
@@ -796,152 +595,67 @@ function MasterBrainCard({ brain, onOpen }: { brain: Brain; onOpen: () => void }
 function Metric({ label, value }: { label: string; value: number | string }) {
   return (
     <div style={{ flex: 1 }}>
-      <div style={{ fontSize: 18, color: 'var(--text)', fontWeight: 600 }}>{value}</div>
-      <div style={{ fontSize: 11, color: 'var(--text2)', letterSpacing: 1 }}>{label}</div>
+      <div style={{ fontSize: 17, color: TEXT, fontWeight: 600 }}>{value}</div>
+      <div style={{ fontSize: 10, color: FAINT, letterSpacing: 1.5, fontFamily: FONT_MONO, marginTop: 2 }}>
+        {label}
+      </div>
     </div>
   )
 }
 
 /* ---------------- Styles ---------------- */
 
-const pageStyle: CSSProperties = { minHeight: '100vh', position: 'relative', overflow: 'hidden' }
+const pageStyle: CSSProperties = {
+  minHeight: '100vh',
+  position: 'relative',
+  overflow: 'hidden',
+  fontFamily: FONT_BODY,
+  color: TEXT,
+  background: 'radial-gradient(ellipse at top, #0f1729 0%, #0a0e1a 55%, #05070f 100%)',
+}
 const gridBg: CSSProperties = {
-  position: 'absolute',
+  position: 'fixed',
   inset: 0,
   pointerEvents: 'none',
   backgroundImage:
-    'linear-gradient(rgba(99,102,241,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.04) 1px, transparent 1px)',
-  backgroundSize: '48px 48px',
-  maskImage: 'radial-gradient(ellipse at top, #000 5%, transparent 70%)',
-  WebkitMaskImage: 'radial-gradient(ellipse at top, #000 5%, transparent 70%)',
+    'linear-gradient(rgba(79,209,197,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(79,209,197,0.04) 1px, transparent 1px)',
+  backgroundSize: '64px 64px',
+  maskImage: 'radial-gradient(ellipse at top, #000 5%, transparent 75%)',
+  WebkitMaskImage: 'radial-gradient(ellipse at top, #000 5%, transparent 75%)',
+  zIndex: 0,
 }
 const vignetteStyle: CSSProperties = {
-  position: 'absolute',
+  position: 'fixed',
   inset: 0,
   pointerEvents: 'none',
   background:
-    'radial-gradient(ellipse at top, rgba(167,139,250,0.08) 0%, transparent 45%), radial-gradient(ellipse at bottom right, rgba(236,72,153,0.06) 0%, transparent 50%)',
+    'radial-gradient(circle at 18% 12%, rgba(79,209,197,0.05) 0%, transparent 40%), radial-gradient(circle at 82% 88%, rgba(99,179,237,0.04) 0%, transparent 45%)',
+  zIndex: 0,
 }
-const navStyle: CSSProperties = {
-  position: 'relative',
-  zIndex: 2,
-  padding: '20px 40px',
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  borderBottom: '1px solid var(--border)',
-  background: 'rgba(15,17,23,0.7)',
-  backdropFilter: 'blur(8px)',
-}
-const brandStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 12 }
-const brandMarkStyle: CSSProperties = {
-  width: 36,
-  height: 36,
-  borderRadius: 8,
-  background: 'linear-gradient(135deg, #6366f1, #ec4899)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  color: '#fff',
-  fontWeight: 700,
-  fontSize: 13,
-}
-const navRightStyle: CSSProperties = { display: 'flex', alignItems: 'center', gap: 12 }
-const userPillStyle: CSSProperties = {
-  fontSize: 13,
-  padding: '6px 12px',
-  background: 'var(--bg2)',
-  border: '1px solid var(--border)',
-  borderRadius: 999,
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-}
-const adminBadgeStyle: CSSProperties = {
-  fontSize: 10,
-  fontWeight: 700,
-  color: '#fff',
-  background: 'var(--accent)',
-  padding: '1px 6px',
-  borderRadius: 4,
-  marginLeft: 4,
-  letterSpacing: 1,
-}
+
 const achievementBadgeStyle: CSSProperties = {
-  marginLeft: 8,
   fontSize: 11,
   fontWeight: 600,
-  color: '#facc15',
-  background: 'rgba(250, 204, 21, 0.10)',
-  border: '1px solid rgba(250, 204, 21, 0.35)',
+  color: AMBER,
+  background: 'rgba(246, 193, 121, 0.10)',
+  border: `1px solid ${AMBER}55`,
   padding: '2px 8px',
-  borderRadius: 999,
+  borderRadius: 4,
   letterSpacing: 0.5,
   whiteSpace: 'nowrap',
+  fontFamily: FONT_BODY,
 }
+
 const ghostBtnStyle: CSSProperties = {
   background: 'transparent',
-  color: 'var(--text2)',
-  border: '1px solid var(--border)',
-  borderRadius: 6,
-  padding: '6px 14px',
-  fontSize: 13,
-  cursor: 'pointer',
-}
-const bigScreenBtnStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 8,
-  textDecoration: 'none',
-  background:
-    'linear-gradient(120deg, rgba(6,182,212,0.14) 0%, rgba(139,92,246,0.18) 50%, rgba(236,72,153,0.14) 100%)',
-  color: '#e0f2fe',
-  border: '1px solid rgba(6,182,212,0.45)',
-  borderRadius: 6,
-  padding: '6px 14px',
+  color: DIM,
+  border: `1px solid ${BORDER}`,
+  borderRadius: 4,
+  padding: '5px 12px',
   fontSize: 12,
-  fontWeight: 600,
   cursor: 'pointer',
-  textTransform: 'uppercase',
-  boxShadow:
-    '0 0 0 1px rgba(6,182,212,0.05), 0 4px 18px rgba(6,182,212,0.18), inset 0 1px 0 rgba(255,255,255,0.06)',
-  transition: 'transform .15s ease, box-shadow .25s ease',
-}
-const bigScreenDotStyle: CSSProperties = {
-  width: 7,
-  height: 7,
-  borderRadius: '50%',
-  background: '#22d3ee',
-  boxShadow: '0 0 10px #22d3ee, 0 0 20px rgba(34,211,238,0.6)',
-  animation: 'bigscreen-pulse 1.6s ease-in-out infinite',
-}
-const bigScreenArrowStyle: CSSProperties = {
-  fontSize: 13,
-  opacity: 0.7,
-  transform: 'translateY(-1px)',
-}
-const discoveriesNavBtnStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 8,
-  background:
-    'linear-gradient(120deg, rgba(167,139,250,0.16) 0%, rgba(236,72,153,0.16) 100%)',
-  color: '#f5d0fe',
-  border: '1px solid rgba(167,139,250,0.45)',
-  borderRadius: 6,
-  padding: '6px 14px',
-  fontSize: 12,
-  fontWeight: 600,
-  cursor: 'pointer',
-  textTransform: 'uppercase',
-  boxShadow: '0 4px 18px rgba(167,139,250,0.18)',
-}
-const discoveriesNavDotStyle: CSSProperties = {
-  width: 7,
-  height: 7,
-  borderRadius: '50%',
-  background: '#f0abfc',
-  boxShadow: '0 0 10px #f0abfc',
+  fontFamily: FONT_BODY,
+  letterSpacing: 1,
 }
 
 const contentStyle: CSSProperties = {
@@ -960,258 +674,147 @@ const heroStyle: CSSProperties = {
   marginBottom: 28,
   flexWrap: 'wrap',
 }
-
-const godHeroWrapStyle: CSSProperties = {
-  position: 'relative',
-  borderRadius: 16,
-  border: '1px solid rgba(167,139,250,0.25)',
-  background:
-    'linear-gradient(135deg, rgba(20,18,40,0.85) 0%, rgba(15,17,30,0.65) 50%, rgba(30,15,40,0.85) 100%)',
-  padding: '28px 32px 24px',
-  marginBottom: 32,
-  overflow: 'hidden',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 18,
-  boxShadow: '0 16px 48px rgba(99,102,241,0.18)',
-}
-const godHeroBgStyle: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  background:
-    'radial-gradient(circle at 15% 0%, rgba(167,139,250,0.30) 0%, transparent 45%), radial-gradient(circle at 85% 100%, rgba(236,72,153,0.18) 0%, transparent 45%)',
-  pointerEvents: 'none',
-}
-const godHeroContentStyle: CSSProperties = {
-  position: 'relative',
-  zIndex: 1,
-  display: 'flex',
-  justifyContent: 'space-between',
-  gap: 32,
-  flexWrap: 'wrap',
-  alignItems: 'flex-start',
-}
-const godEyebrowStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 8,
-  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-  fontSize: 11,
-  letterSpacing: 3,
-  color: '#a78bfa',
-  marginBottom: 12,
-}
-const pulseDotStyle: CSSProperties = {
-  width: 8,
-  height: 8,
-  borderRadius: '50%',
-  background: '#a78bfa',
-  boxShadow: '0 0 12px #a78bfa, 0 0 4px #fff',
-  animation: 'none',
-}
-const godTitleStyle: CSSProperties = {
+const heroTitleStyle: CSSProperties = {
   fontSize: 38,
   margin: 0,
   fontWeight: 700,
-  color: '#e2e8f0',
-  lineHeight: 1.15,
+  color: TEXT,
   letterSpacing: 1,
+  lineHeight: 1.2,
 }
-const godTitleAccentStyle: CSSProperties = {
-  background: 'linear-gradient(90deg, #a78bfa 0%, #ec4899 100%)',
-  WebkitBackgroundClip: 'text',
-  WebkitTextFillColor: 'transparent',
-  backgroundClip: 'text',
-}
-const godSubtitleStyle: CSSProperties = {
-  marginTop: 12,
-  color: '#94a3b8',
+const heroSubStyle: CSSProperties = {
+  marginTop: 10,
+  color: DIM,
   fontSize: 14,
   lineHeight: 1.7,
-  maxWidth: 560,
-}
-const godStatsStyle: CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(2, minmax(110px, 1fr))',
-  gap: 10,
-  minWidth: 240,
-}
-const statTileStyle: CSSProperties = {
-  background: 'rgba(15,17,23,0.55)',
-  border: '1px solid',
-  borderRadius: 10,
-  padding: '12px 14px',
-  backdropFilter: 'blur(6px)',
+  maxWidth: 620,
 }
 
-const masterSlotStyle: CSSProperties = { marginBottom: 28 }
-const branchesHeaderStyle: CSSProperties = {
+const sectionStyle: CSSProperties = { marginBottom: 28 }
+
+const sectionTitleStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 12,
-  marginBottom: 20,
-  marginTop: 4,
+  marginBottom: 16,
 }
-const sectionLabelStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 12,
-  marginBottom: 12,
+const sectionTitleDot: CSSProperties = {
+  width: 6,
+  height: 6,
+  background: ACCENT,
+  boxShadow: `0 0 8px ${ACCENT}`,
+  borderRadius: '50%',
 }
-const cornerBracketL: CSSProperties = {
-  width: 14,
-  height: 10,
-  borderLeft: '2px solid currentColor',
-  borderTop: '2px solid currentColor',
-  color: '#475569',
-  display: 'inline-block',
-}
-const cornerBracketR: CSSProperties = {
-  width: 14,
-  height: 10,
-  borderRight: '2px solid currentColor',
-  borderBottom: '2px solid currentColor',
-  color: '#475569',
-  display: 'inline-block',
-  marginLeft: 'auto',
-}
-const dividerLineStyle: CSSProperties = {
+const sectionTitleLine: CSSProperties = {
   flex: 1,
   height: 1,
   background:
-    'linear-gradient(90deg, rgba(99,102,241,0.4), rgba(99,102,241,0.05) 70%, transparent)',
+    'linear-gradient(90deg, rgba(79,209,197,0.25), rgba(79,209,197,0.04) 70%, transparent)',
 }
 
 const groupsStackStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 22,
+  gap: 26,
 }
 const groupSectionStyle: CSSProperties = {
   position: 'relative',
-  borderRadius: 14,
-  border: '1px solid',
-  background:
-    'linear-gradient(180deg, rgba(20,22,32,0.55) 0%, rgba(15,17,23,0.30) 100%)',
-  padding: '20px 22px 22px',
-  overflow: 'hidden',
-}
-const groupBgWashStyle: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  pointerEvents: 'none',
-  zIndex: 0,
 }
 const groupHeaderStyle: CSSProperties = {
-  position: 'relative',
-  zIndex: 1,
   display: 'flex',
   alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 16,
-  marginBottom: 18,
-  paddingBottom: 14,
-  borderBottom: '1px dashed rgba(148,163,184,0.18)',
+  gap: 10,
+  marginBottom: 14,
   flexWrap: 'wrap',
 }
-const userAvatarStyle: CSSProperties = {
-  width: 44,
-  height: 44,
-  borderRadius: 12,
-  display: 'flex',
+const groupBadgeStyle: CSSProperties = {
+  width: 26,
+  height: 26,
+  borderRadius: 4,
+  display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  color: '#fff',
-  fontSize: 18,
+  background: 'rgba(79, 209, 197, 0.10)',
+  border: `1px solid ${BORDER_HOT}`,
+  color: ACCENT,
+  fontSize: 12,
   fontWeight: 700,
-  letterSpacing: 1,
-  flexShrink: 0,
+  fontFamily: FONT_MONO,
 }
-const groupCountBadgeStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  minWidth: 64,
-  padding: '6px 12px',
-  border: '1px solid rgba(148,163,184,0.18)',
-  borderRadius: 8,
-  background: 'rgba(15,17,23,0.5)',
+const selfTagStyle: CSSProperties = {
+  fontSize: 10,
+  letterSpacing: 1,
+  color: '#0a0e1a',
+  background: ACCENT,
+  borderRadius: 3,
+  padding: '2px 6px',
+  fontWeight: 700,
 }
 
 const primaryBtnStyle: CSSProperties = {
-  background: 'linear-gradient(90deg, var(--accent), var(--accent2))',
-  color: '#fff',
+  background: `linear-gradient(120deg, ${ACCENT}, ${ACCENT_2})`,
+  color: '#0a0e1a',
   border: 'none',
-  borderRadius: 8,
-  padding: '12px 22px',
-  fontSize: 14,
-  fontWeight: 600,
+  borderRadius: 6,
+  padding: '11px 22px',
+  fontSize: 13,
+  fontWeight: 700,
+  letterSpacing: 1,
   cursor: 'pointer',
-  boxShadow: '0 8px 24px rgba(99,102,241,0.35)',
-  alignSelf: 'flex-start',
+  boxShadow: `0 8px 24px ${ACCENT}33`,
+  fontFamily: FONT_BODY,
 }
 const errorBoxStyle: CSSProperties = {
-  background: 'rgba(239,68,68,0.1)',
-  color: 'var(--red)',
-  border: '1px solid rgba(239,68,68,0.3)',
-  borderRadius: 8,
+  background: 'rgba(251,113,133,0.08)',
+  color: '#fb7185',
+  border: '1px solid rgba(251,113,133,0.3)',
+  borderRadius: 6,
   padding: '10px 14px',
   fontSize: 13,
   marginBottom: 16,
 }
 const emptyStyle: CSSProperties = {
-  background: 'var(--bg2)',
-  border: '1px dashed var(--border)',
-  borderRadius: 12,
+  background: 'rgba(10, 14, 26, 0.6)',
+  border: `1px dashed ${BORDER}`,
+  borderRadius: 10,
   padding: '60px 24px',
   textAlign: 'center',
-  color: 'var(--text)',
+  color: TEXT,
 }
 const gridStyle: CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-  gap: 16,
+  gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+  gap: 18,
 }
 const cardStyle: CSSProperties = {
-  background: 'var(--bg2)',
-  border: '1px solid var(--border)',
-  borderRadius: 12,
+  background: 'rgba(10, 14, 26, 0.75)',
+  border: `1px solid ${BORDER}`,
+  borderRadius: 10,
   padding: 20,
   cursor: 'pointer',
-  transition: 'transform .15s ease, border-color .15s',
+  transition: 'transform .2s ease, border-color .2s ease, box-shadow .25s ease',
   position: 'relative',
   overflow: 'hidden',
 }
 const masterCardStyle: CSSProperties = {
   background:
-    'linear-gradient(135deg, #1a1a2e 0%, #1d1738 50%, #2a1845 100%)',
-  border: '1px solid #8b5cf677',
-  borderRadius: 14,
+    'linear-gradient(135deg, rgba(15, 22, 38, 0.90) 0%, rgba(10, 14, 26, 0.90) 50%, rgba(15, 26, 38, 0.90) 100%)',
+  border: `1px solid ${BORDER_HOT}`,
+  borderRadius: 12,
   padding: '24px 28px',
   position: 'relative',
   overflow: 'hidden',
   cursor: 'pointer',
-  boxShadow:
-    '0 16px 48px rgba(139, 92, 246, 0.28), inset 0 1px 0 rgba(255,255,255,0.05)',
+  boxShadow: `0 16px 48px rgba(79, 209, 197, 0.15), inset 0 1px 0 rgba(255,255,255,0.04)`,
+  transition: 'border-color .2s ease, transform .2s ease',
 }
 const masterGlowStyle: CSSProperties = {
   position: 'absolute',
-  top: -100,
-  right: -80,
-  width: 280,
-  height: 280,
-  background: 'radial-gradient(circle, rgba(139,92,246,0.45) 0%, transparent 70%)',
-  pointerEvents: 'none',
-  zIndex: 0,
-}
-const masterGlowStyle2: CSSProperties = {
-  position: 'absolute',
-  bottom: -120,
-  left: -60,
-  width: 240,
-  height: 240,
-  background: 'radial-gradient(circle, rgba(236,72,153,0.22) 0%, transparent 70%)',
+  top: -120,
+  right: -100,
+  width: 320,
+  height: 320,
+  background: `radial-gradient(circle, ${ACCENT}26 0%, transparent 70%)`,
   pointerEvents: 'none',
   zIndex: 0,
 }
@@ -1220,25 +823,39 @@ const masterMetricStyle: CSSProperties = {
   alignItems: 'center',
   gap: 6,
   padding: '6px 12px',
-  background: 'rgba(139,92,246,0.10)',
-  border: '1px solid rgba(139,92,246,0.20)',
-  borderRadius: 999,
+  background: 'rgba(79, 209, 197, 0.08)',
+  border: `1px solid ${BORDER_HOT}`,
+  borderRadius: 4,
+  fontFamily: FONT_BODY,
 }
 const cardTopStyle: CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
   alignItems: 'center',
 }
+const cardTitleStyle: CSSProperties = {
+  fontSize: 17,
+  color: TEXT,
+  fontWeight: 600,
+  margin: '14px 0 8px',
+  letterSpacing: 0.3,
+  lineHeight: 1.35,
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+}
 const statePillStyle: CSSProperties = {
   fontSize: 11,
   padding: '3px 10px',
-  borderRadius: 999,
+  borderRadius: 4,
   border: '1px solid',
   display: 'inline-flex',
   alignItems: 'center',
   gap: 6,
   letterSpacing: 1,
   fontWeight: 500,
+  fontFamily: FONT_BODY,
 }
 const stateDot: CSSProperties = {
   width: 6,
@@ -1247,11 +864,12 @@ const stateDot: CSSProperties = {
   boxShadow: '0 0 8px currentColor',
 }
 const seedQuestionStyle: CSSProperties = {
-  color: 'var(--text2)',
+  color: DIM,
   fontSize: 13,
   lineHeight: 1.6,
-  borderLeft: '2px solid var(--accent)',
+  borderLeft: `2px solid ${ACCENT}66`,
   paddingLeft: 10,
+  margin: 0,
   display: '-webkit-box',
   WebkitLineClamp: 3,
   WebkitBoxOrient: 'vertical',
@@ -1262,7 +880,7 @@ const metricsRow: CSSProperties = {
   gap: 8,
   marginTop: 18,
   paddingTop: 14,
-  borderTop: '1px dashed var(--border)',
+  borderTop: `1px dashed ${BORDER}`,
 }
 const cardActions: CSSProperties = {
   display: 'flex',
@@ -1272,10 +890,28 @@ const cardActions: CSSProperties = {
 }
 const smallBtnStyle: CSSProperties = {
   background: 'transparent',
-  color: 'var(--text2)',
-  border: '1px solid var(--border)',
-  borderRadius: 6,
-  padding: '6px 12px',
+  color: DIM,
+  border: `1px solid ${BORDER}`,
+  borderRadius: 4,
+  padding: '5px 12px',
   fontSize: 12,
   cursor: 'pointer',
+  fontFamily: FONT_BODY,
+  letterSpacing: 0.5,
+}
+
+function StyleTag() {
+  return (
+    <style>{`
+      .ainstein-brain-card:hover {
+        transform: translateY(-2px);
+        border-color: ${BORDER_HOT} !important;
+        box-shadow: 0 12px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(79,209,197,0.10);
+      }
+      .ainstein-master-card:hover {
+        transform: translateY(-2px);
+        border-color: rgba(79, 209, 197, 0.45) !important;
+      }
+    `}</style>
+  )
 }

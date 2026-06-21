@@ -3,11 +3,11 @@ import { useNavigate, useLocation } from 'react-router-dom'
 
 /* ============================================================
  * AdminNav · 统一深空风导航
- *  在 态势大屏 / 发现广场 / 运营仪表盘 三页顶部使用。
- *  美学：深色毛玻璃 + 青蓝强调 + 等宽编号
+ *  在 我的大脑 / 态势大屏 / 发现广场 / 运营仪表盘 四页顶部使用。
+ *  全中文标签，简洁的毛玻璃 + 青蓝强调。
  * ============================================================ */
 
-export type AdminNavKey = 'bigscreen' | 'discoveries' | 'dashboard'
+export type AdminNavKey = 'home' | 'bigscreen' | 'discoveries' | 'dashboard'
 
 interface Props {
   active: AdminNavKey
@@ -15,12 +15,15 @@ interface Props {
   floating?: boolean
   /** 右侧附加内容（如时钟、用户信息） */
   rightSlot?: React.ReactNode
+  /** 左侧是否显示「返回大脑列表」按钮，默认 true。在 BrainList 主页应传 false */
+  showBack?: boolean
 }
 
-const NAV_ITEMS: Array<{ key: AdminNavKey; label: string; sub: string; path: string; idx: string }> = [
-  { key: 'bigscreen', label: '态势大屏', sub: 'TOPOLOGY', path: '/admin/bigscreen', idx: '01' },
-  { key: 'discoveries', label: '发现广场', sub: 'DISCOVERY', path: '/discoveries', idx: '02' },
-  { key: 'dashboard', label: '运营仪表盘', sub: 'OPERATIONS', path: '/admin/dashboard', idx: '03' },
+const NAV_ITEMS: Array<{ key: AdminNavKey; label: string; path: string; idx: string }> = [
+  { key: 'home', label: '我的大脑', path: '/brains', idx: '01' },
+  { key: 'bigscreen', label: '态势大屏', path: '/admin/bigscreen', idx: '02' },
+  { key: 'discoveries', label: '发现广场', path: '/discoveries', idx: '03' },
+  { key: 'dashboard', label: '运营仪表盘', path: '/admin/dashboard', idx: '04' },
 ]
 
 const FONT_MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
@@ -33,7 +36,7 @@ const TEXT = '#dce6f5'
 const DIM = '#7a8da8'
 const FAINT = '#475569'
 
-export default function AdminNav({ active, floating = false, rightSlot }: Props) {
+export default function AdminNav({ active, floating = false, rightSlot, showBack = true }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -41,36 +44,39 @@ export default function AdminNav({ active, floating = false, rightSlot }: Props)
     <nav style={floating ? floatingWrapStyle : staticWrapStyle}>
       <style>{`
         .ainstein-nav-link { transition: color .2s ease, background .2s ease, border-color .2s ease; }
-        .ainstein-nav-link:hover { color: ${TEXT} !important; border-color: rgba(99,179,237,.45) !important; }
+        .ainstein-nav-link:hover { color: ${TEXT} !important; border-color: rgba(79,209,197,.35) !important; }
         .ainstein-nav-link[data-active="true"]::after {
           content: '';
           position: absolute;
-          left: 14px; right: 14px; bottom: -1px;
+          left: 12px; right: 12px; bottom: -1px;
           height: 1px;
           background: linear-gradient(90deg, transparent, ${ACCENT} 30%, ${ACCENT_2} 70%, transparent);
           box-shadow: 0 0 12px ${ACCENT}aa;
         }
-        .ainstein-nav-back:hover { border-color: rgba(99,179,237,.45) !important; color: ${TEXT} !important; }
+        .ainstein-nav-back:hover { border-color: rgba(79,209,197,.35) !important; color: ${TEXT} !important; }
       `}</style>
 
       <div style={leftClusterStyle}>
-        <button
-          className="ainstein-nav-back"
-          onClick={() => navigate('/brains')}
-          style={backBtnStyle}
-          title="返回大脑列表"
-        >
-          <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span>
-          <span>返回大脑列表</span>
-        </button>
-
-        <span style={dividerStyle} />
+        {showBack && (
+          <>
+            <button
+              className="ainstein-nav-back"
+              onClick={() => navigate('/brains')}
+              style={backBtnStyle}
+              title="返回大脑列表"
+            >
+              <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span>
+              <span>返回</span>
+            </button>
+            <span style={dividerStyle} />
+          </>
+        )}
 
         <span style={brandStyle}>
           <span style={brandDotStyle} />
-          <span style={{ color: TEXT, letterSpacing: 4, fontWeight: 500 }}>AInstein</span>
+          <span style={{ color: TEXT, letterSpacing: 3, fontWeight: 500 }}>AInstein</span>
           <span style={{ color: FAINT, margin: '0 8px' }}>·</span>
-          <span style={{ color: DIM, letterSpacing: 2 }}>控制台</span>
+          <span style={{ color: DIM, letterSpacing: 1.5 }}>控制台</span>
         </span>
       </div>
 
@@ -87,13 +93,17 @@ export default function AdminNav({ active, floating = false, rightSlot }: Props)
               }}
               style={navItemStyle(isActive)}
             >
-              <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: isActive ? ACCENT : FAINT, letterSpacing: 1 }}>
+              <span
+                style={{
+                  fontFamily: FONT_MONO,
+                  fontSize: 10,
+                  color: isActive ? ACCENT : FAINT,
+                  letterSpacing: 1,
+                }}
+              >
                 {it.idx}
               </span>
               <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: 1.5 }}>{it.label}</span>
-              <span style={{ fontFamily: FONT_MONO, fontSize: 9, color: isActive ? ACCENT_2 : FAINT, letterSpacing: 2 }}>
-                {it.sub}
-              </span>
             </button>
           )
         })}
@@ -110,8 +120,9 @@ const baseWrapStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 18,
-  padding: '12px 28px',
-  background: 'rgba(10, 14, 26, 0.72)',
+  height: 56,
+  padding: '0 28px',
+  background: 'rgba(10, 14, 26, 0.85)',
   borderBottom: '1px solid rgba(120, 160, 220, 0.15)',
   backdropFilter: 'blur(14px) saturate(140%)',
   WebkitBackdropFilter: 'blur(14px) saturate(140%)',
@@ -122,7 +133,8 @@ const baseWrapStyle: CSSProperties = {
 
 const staticWrapStyle: CSSProperties = {
   ...baseWrapStyle,
-  position: 'relative',
+  position: 'sticky',
+  top: 0,
   zIndex: 50,
 }
 
@@ -145,12 +157,12 @@ const leftClusterStyle: CSSProperties = {
 const backBtnStyle: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 8,
+  gap: 6,
   background: 'transparent',
   color: DIM,
   border: '1px solid rgba(120, 160, 220, 0.2)',
   borderRadius: 4,
-  padding: '6px 12px',
+  padding: '5px 10px',
   fontSize: 12,
   letterSpacing: 1,
   fontFamily: FONT_BODY,
@@ -183,7 +195,7 @@ const navGroupStyle: CSSProperties = {
   flex: '1 1 auto',
   display: 'flex',
   justifyContent: 'center',
-  gap: 6,
+  gap: 4,
 }
 
 function navItemStyle(active: boolean): CSSProperties {
@@ -191,13 +203,13 @@ function navItemStyle(active: boolean): CSSProperties {
     position: 'relative',
     display: 'inline-flex',
     alignItems: 'center',
-    gap: 10,
-    background: active ? 'rgba(79, 209, 197, 0.06)' : 'transparent',
+    gap: 8,
+    background: active ? 'rgba(79, 209, 197, 0.08)' : 'transparent',
     color: active ? TEXT : DIM,
     border: '1px solid',
-    borderColor: active ? 'rgba(79, 209, 197, 0.35)' : 'rgba(120, 160, 220, 0.12)',
+    borderColor: active ? 'rgba(79, 209, 197, 0.35)' : 'rgba(120, 160, 220, 0.10)',
     borderRadius: 4,
-    padding: '8px 14px',
+    padding: '7px 14px',
     cursor: 'pointer',
     fontFamily: FONT_BODY,
   }
