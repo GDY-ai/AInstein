@@ -67,6 +67,28 @@ def start_scheduler():
     scheduler.add_job(scheduled_scientist, 'cron', day_of_week='mon', hour=6, minute=0,
                       id='weekly_scientist', max_instances=1, coalesce=True)
 
+    # Master daily digest: daily 08:00 UTC (Task #17)
+    def scheduled_master_digest():
+        try:
+            from master_brain_tactics import generate_master_brain_digest
+            from distribution import publish_digest
+            master_id = db.get_master_brain_id()
+            if not master_id:
+                logger.info("master brain not initialized, skip digest")
+                return
+            digest = generate_master_brain_digest(master_id)
+            if not digest:
+                logger.info("master digest skipped: no activity in last 24h")
+                return
+            digest['master_id'] = master_id
+            result = publish_digest(digest)
+            logger.info("master digest published: %s", result)
+        except Exception as e:
+            logger.exception("scheduled_master_digest failed: %s", e)
+
+    scheduler.add_job(scheduled_master_digest, 'cron', hour=8, minute=0,
+                      id='daily_master_digest', max_instances=1, coalesce=True)
+
     scheduler.start()
     logger.info("APScheduler started")
 

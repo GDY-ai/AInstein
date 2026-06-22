@@ -4,7 +4,7 @@ import re
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
-from flask import Flask, request, jsonify, send_from_directory, send_file, g, Response
+from flask import Flask, request, jsonify, send_from_directory, send_file, g, Response, redirect
 import database as db
 import auth
 
@@ -179,6 +179,67 @@ def auth_me() -> Any:
     return jsonify({'user': auth.public_user(g.current_user)})
 
 
+# ---------- GitHub OAuth（Task #18） ----------
+
+@app.route('/ainstein/api/auth/github/authorize', methods=['GET'])
+def github_authorize() -> Any:
+    """重定向到 GitHub OAuth 授权页。
+
+    单服务器部署，state 仅作 CSRF 占位（不持久化校验）；
+    若未配置 client id，提示前端走密码登录。
+    """
+    import secrets as _secrets
+    from urllib.parse import urlencode
+    import oauth as _oauth
+    if not _oauth.is_configured():
+        return jsonify({'error': 'GitHub OAuth 未配置（缺少 GITHUB_OAUTH_CLIENT_ID/SECRET）'}), 503
+    redirect_uri = request.host_url.rstrip('/') + '/ainstein/api/auth/github/callback'
+    params = urlencode({
+        'client_id': _oauth.GITHUB_CLIENT_ID,
+        'redirect_uri': redirect_uri,
+        'scope': 'read:user user:email',
+        'state': _secrets.token_urlsafe(16),
+        'allow_signup': 'true',
+    })
+    return redirect(f'{_oauth.GITHUB_AUTHORIZE_URL}?{params}')
+
+
+@app.route('/ainstein/api/auth/github/callback', methods=['GET'])
+def github_callback() -> Any:
+    """GitHub OAuth 回调：code → access_token → 用户档案 → 本地账号 → token。"""
+    import oauth as _oauth
+
+    code = request.args.get('code')
+    if not code:
+        return redirect('/ainstein/login?error=oauth_failed')
+
+    access_token = _oauth.exchange_code_for_token(code)
+    if not access_token:
+        return redirect('/ainstein/login?error=oauth_failed')
+
+    github_user = _oauth.fetch_github_user(access_token)
+    if not github_user:
+        return redirect('/ainstein/login?error=oauth_failed')
+
+    user_id = _oauth.get_or_create_user_from_github(github_user)
+    if not user_id:
+        return redirect('/ainstein/login?error=oauth_failed')
+
+    user = db.get_user(user_id) or {}
+    token = auth.generate_token(user_id, role=user.get('role') or 'user')
+    try:
+        db.add_tracking_event(user_id, 'user.login', metadata={'provider': 'github'})
+    except Exception:
+        logger.exception('tracking github login failed')
+    try:
+        db.check_and_unlock_achievements(user_id)
+    except Exception:
+        logger.exception('achievements unlock (github) failed')
+
+    # 重定向到前端，由前端 App 启动时拦截 ?token=... 写入 localStorage
+    return redirect(f'/ainstein/brains?token={token}')
+
+
 # ---------- 用户行为埋点 ----------
 
 @app.route('/ainstein/api/tracking', methods=['POST'])
@@ -287,6 +348,9 @@ def create_brain_api() -> Any:
     name = (data.get('name') or '').strip()
     seed_question = (data.get('seed_question') or '').strip()
     config = data.get('config') or {}
+    # 快思考模式（Task #15）：新用户默认 fast，可由前端覆盖
+    if isinstance(config, dict) and not config.get('mode'):
+        config['mode'] = 'fast'
 
     if not name:
         return jsonify({'error': 'name 必填'}), 400
@@ -1580,42 +1644,279 @@ _PUBLIC_PAPER_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>{title}</title>
+<title>{title} · AInstein 硅基大脑</title>
+<meta name="description" content="{og_description}" />
+<!-- Open Graph -->
+<meta property="og:type" content="article" />
+<meta property="og:title" content="{title}" />
+<meta property="og:description" content="{og_description}" />
+<meta property="og:image" content="{og_image}" />
+<meta property="og:image:width" content="1792" />
+<meta property="og:image:height" content="1024" />
+<meta property="og:url" content="{og_url}" />
+<meta property="og:site_name" content="AInstein 硅基大脑" />
+<meta property="og:locale" content="zh_CN" />
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="{title}" />
+<meta name="twitter:description" content="{twitter_description}" />
+<meta name="twitter:image" content="{og_image}" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='22' fill='none' stroke='%2360a5fa' stroke-width='3'/><circle cx='32' cy='32' r='6' fill='%23a5b4fc'/></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=JetBrains+Mono:wght@400;600&family=Noto+Serif+SC:wght@500;700&display=swap" rel="stylesheet" />
 <style>
-  :root {{ color-scheme: light dark; }}
-  body {{ margin: 0; background: #0f1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }}
-  .wrap {{ max-width: 820px; margin: 0 auto; padding: 56px 24px 96px; line-height: 1.75; }}
-  .badge {{ display: inline-block; font-size: 11px; letter-spacing: 3px; color: #64748b; border: 1px solid #1f2333; padding: 4px 10px; border-radius: 999px; }}
-  h1 {{ font-size: 28px; margin: 16px 0 8px; color: #f8fafc; line-height: 1.35; }}
-  h2 {{ font-size: 20px; margin-top: 36px; color: #93c5fd; border-left: 3px solid #3b82f6; padding-left: 10px; }}
-  h3 {{ font-size: 16px; margin-top: 24px; color: #cbd5e1; }}
-  p {{ color: #cbd5e1; }}
-  a {{ color: #60a5fa; }}
-  code {{ background: rgba(148,163,184,0.12); padding: 1px 5px; border-radius: 3px; font-size: 0.92em; }}
-  pre {{ background: #1a1d27; border: 1px solid #1f2333; padding: 14px; border-radius: 8px; overflow: auto; }}
-  pre code {{ background: transparent; padding: 0; }}
-  ul {{ padding-left: 22px; }}
-  li {{ margin: 4px 0; }}
-  .meta {{ display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: #94a3b8; margin: 14px 0 28px; padding-bottom: 16px; border-bottom: 1px solid #1f2333; }}
-  .actions {{ margin-top: 8px; }}
-  .btn {{ display: inline-block; padding: 8px 16px; border-radius: 8px; background: #1d4ed8; color: #fff; text-decoration: none; font-size: 13px; }}
-  .btn:hover {{ background: #2563eb; }}
-  .footer {{ margin-top: 64px; padding-top: 18px; border-top: 1px solid #1f2333; font-size: 12px; color: #64748b; text-align: center; }}
+  :root {{
+    color-scheme: dark;
+    --bg-deep: #07080d;
+    --bg-canvas: #0b0d14;
+    --bg-card: rgba(18, 22, 34, 0.72);
+    --line: rgba(120, 134, 168, 0.18);
+    --line-strong: rgba(120, 134, 168, 0.32);
+    --ink: #e7ebf3;
+    --ink-soft: #b6bdcc;
+    --ink-mute: #7c8499;
+    --accent: #93c5fd;
+    --accent-2: #c4b5fd;
+    --accent-warm: #fbcfa3;
+  }}
+  * {{ box-sizing: border-box; }}
+  html, body {{ margin: 0; padding: 0; }}
+  body {{
+    background: var(--bg-deep);
+    color: var(--ink);
+    font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "Fraunces", Georgia, serif;
+    font-feature-settings: "ss01", "ss02";
+    line-height: 1.78;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }}
+  body::before {{
+    content: "";
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(1100px 720px at 80% -10%, rgba(99,102,241,0.18), transparent 60%),
+      radial-gradient(900px 600px at -10% 30%, rgba(56,189,248,0.10), transparent 55%),
+      radial-gradient(800px 700px at 50% 110%, rgba(251,207,163,0.06), transparent 60%),
+      linear-gradient(180deg, #07080d 0%, #0b0d14 100%);
+    z-index: -2;
+  }}
+  body::after {{
+    content: "";
+    position: fixed; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(148,163,184,0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148,163,184,0.045) 1px, transparent 1px);
+    background-size: 56px 56px, 56px 56px;
+    mask-image: radial-gradient(ellipse at 50% 30%, #000 35%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 30%, #000 35%, transparent 80%);
+    z-index: -1;
+  }}
+  .nav {{
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    background: rgba(7,8,13,0.55);
+    border-bottom: 1px solid var(--line);
+  }}
+  .nav-inner {{
+    max-width: 1080px; margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 28px;
+  }}
+  .brand {{ display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }}
+  .brand-glyph {{
+    width: 30px; height: 30px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #c4b5fd 0%, #6366f1 45%, #1e1b4b 90%);
+    box-shadow: 0 0 22px rgba(99,102,241,0.55), inset 0 0 12px rgba(255,255,255,0.18);
+    position: relative;
+  }}
+  .brand-glyph::after {{
+    content: ""; position: absolute; inset: -6px;
+    border: 1px dashed rgba(148,163,184,0.4); border-radius: 50%;
+    animation: spin 22s linear infinite;
+  }}
+  @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+  .brand-name {{ font-family: "Fraunces", serif; font-weight: 700; font-size: 18px; letter-spacing: 0.5px; }}
+  .brand-zh {{ font-family: "Noto Serif SC", serif; font-weight: 700; font-size: 15px; color: var(--ink-soft); margin-left: 2px; }}
+  .nav-actions {{ display: flex; gap: 18px; align-items: center; font-family: "JetBrains Mono", monospace; font-size: 11.5px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--ink-mute); }}
+  .nav-actions a {{ color: var(--ink-mute); text-decoration: none; transition: color .2s ease; }}
+  .nav-actions a:hover {{ color: var(--accent); }}
+  .nav-actions .dot {{ width: 6px; height: 6px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 8px #4ade80; display: inline-block; margin-right: 6px; vertical-align: middle; }}
+
+  .wrap {{ max-width: 880px; margin: 0 auto; padding: 56px 28px 120px; }}
+  .eyebrow {{
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: 3.6px;
+    color: var(--ink-mute); text-transform: uppercase;
+    padding: 6px 14px; border: 1px solid var(--line-strong); border-radius: 999px;
+    background: rgba(255,255,255,0.02);
+  }}
+  .eyebrow .pulse {{ width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); animation: pulse 2.4s ease-in-out infinite; }}
+  @keyframes pulse {{ 0%,100% {{ opacity: 1; transform: scale(1); }} 50% {{ opacity: 0.55; transform: scale(0.85); }} }}
+
+  h1.title {{
+    font-family: "Noto Serif SC", "Fraunces", serif;
+    font-weight: 700;
+    font-size: clamp(30px, 4.6vw, 46px);
+    line-height: 1.22;
+    letter-spacing: -0.5px;
+    margin: 22px 0 18px;
+    color: #f5f7fb;
+    background: linear-gradient(180deg, #f8fafc 0%, #c8d0e0 110%);
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+  }}
+  .seed {{
+    font-family: "Fraunces", "Noto Serif SC", serif; font-style: italic;
+    font-size: 16.5px; color: var(--ink-soft);
+    border-left: 2px solid var(--accent-2);
+    padding: 6px 0 6px 18px; margin: 18px 0 26px;
+    max-width: 720px;
+  }}
+  .seed b {{ font-style: normal; color: var(--accent-warm); font-weight: 600; letter-spacing: 0.3px; margin-right: 6px; font-family: "JetBrains Mono", monospace; font-size: 11px; }}
+
+  .meta-row {{
+    display: flex; flex-wrap: wrap; gap: 22px;
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px; letter-spacing: 1.6px;
+    color: var(--ink-mute); text-transform: uppercase;
+    padding: 14px 0 22px; border-bottom: 1px solid var(--line);
+  }}
+  .meta-row span strong {{ color: var(--ink); font-weight: 600; margin-left: 6px; letter-spacing: 1px; }}
+
+  .actions {{
+    display: flex; flex-wrap: wrap; gap: 14px;
+    margin: 30px 0 38px;
+  }}
+  .btn {{
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 13px 22px; border-radius: 12px;
+    font-family: "Noto Serif SC", serif; font-weight: 600; font-size: 14.5px;
+    text-decoration: none; letter-spacing: 0.5px;
+    transition: transform .22s ease, box-shadow .22s ease, background .22s ease;
+  }}
+  .btn-primary {{
+    color: #0b0d14;
+    background: linear-gradient(135deg, #fbcfa3 0%, #f5b27a 60%, #c084fc 130%);
+    box-shadow: 0 14px 40px -14px rgba(251,207,163,0.55), inset 0 1px 0 rgba(255,255,255,0.4);
+  }}
+  .btn-primary:hover {{ transform: translateY(-2px); box-shadow: 0 22px 50px -14px rgba(251,207,163,0.6); }}
+  .btn-ghost {{
+    color: var(--ink); background: rgba(255,255,255,0.04);
+    border: 1px solid var(--line-strong);
+  }}
+  .btn-ghost:hover {{ border-color: var(--accent); color: var(--accent); transform: translateY(-2px); }}
+  .btn .arrow {{ font-family: "JetBrains Mono", monospace; font-weight: 600; }}
+
+  .abstract-card {{
+    position: relative;
+    margin: 0 0 44px;
+    padding: 28px 30px 26px;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 28px 60px -30px rgba(0,0,0,0.6);
+  }}
+  .abstract-card::before {{
+    content: "摘 要";
+    position: absolute; top: -11px; left: 24px;
+    font-family: "JetBrains Mono", monospace; font-size: 10.5px; letter-spacing: 6px;
+    background: var(--bg-deep); color: var(--accent);
+    padding: 2px 12px; border: 1px solid var(--line-strong); border-radius: 4px;
+  }}
+  .abstract-card p {{ margin: 0; color: var(--ink-soft); font-size: 15.5px; line-height: 1.85; }}
+
+  article {{ margin-top: 12px; }}
+  article h1, article h2, article h3 {{ font-family: "Noto Serif SC", "Fraunces", serif; }}
+  article h2 {{ font-size: 22px; margin: 44px 0 14px; color: #e2e8f0; padding-left: 14px; border-left: 3px solid var(--accent-2); }}
+  article h3 {{ font-size: 17px; margin: 28px 0 10px; color: #cbd5e1; }}
+  article p {{ color: var(--ink-soft); font-size: 15.5px; }}
+  article a {{ color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }}
+  article code {{ font-family: "JetBrains Mono", monospace; background: rgba(148,163,184,0.10); padding: 1px 6px; border-radius: 4px; font-size: 0.9em; color: var(--accent-warm); }}
+  article pre {{ background: rgba(7,8,13,0.6); border: 1px solid var(--line); padding: 16px 18px; border-radius: 12px; overflow: auto; }}
+  article pre code {{ background: transparent; color: var(--ink); padding: 0; }}
+  article ul {{ padding-left: 24px; }}
+  article li {{ margin: 6px 0; color: var(--ink-soft); }}
+
+  .footer-cta {{
+    margin-top: 80px;
+    padding: 36px 32px;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background:
+      radial-gradient(600px 200px at 80% -20%, rgba(99,102,241,0.18), transparent 70%),
+      rgba(11,13,20,0.7);
+    text-align: center;
+  }}
+  .footer-cta h3 {{ font-family: "Noto Serif SC", serif; font-size: 22px; margin: 0 0 8px; color: var(--ink); }}
+  .footer-cta p {{ color: var(--ink-mute); font-size: 14.5px; margin: 0 0 20px; }}
+
+  .footer {{
+    margin-top: 60px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px;
+    font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: 1.8px;
+    color: var(--ink-mute); text-transform: uppercase;
+  }}
+
+  @media (max-width: 640px) {{
+    .wrap {{ padding: 36px 18px 80px; }}
+    .nav-inner {{ padding: 12px 18px; }}
+    .nav-actions {{ display: none; }}
+    .actions {{ flex-direction: column; align-items: stretch; }}
+    .btn {{ justify-content: center; }}
+    .meta-row {{ gap: 14px; }}
+  }}
 </style>
 </head>
 <body>
-  <div class="wrap">
-    <span class="badge">AINSTEIN · PUBLIC RESEARCH</span>
-    <h1>{title}</h1>
-    <div class="meta">
-      <span>大脑 #{brain_id}</span>
-      <span>查看次数 {view_count}</span>
-      <span>生成于 {created_at}</span>
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/ainstein">
+        <span class="brand-glyph" aria-hidden="true"></span>
+        <span class="brand-name">AInstein</span>
+        <span class="brand-zh">· 硅基大脑</span>
+      </a>
+      <nav class="nav-actions">
+        <span><span class="dot"></span>Public Research</span>
+        <a href="/ainstein">进入实验室 ↗</a>
+      </nav>
     </div>
-    {pdf_action}
+  </header>
+
+  <main class="wrap">
+    <span class="eyebrow"><span class="pulse"></span>AInstein · Public Paper</span>
+    <h1 class="title">{title}</h1>
+    <div class="seed"><b>SEED</b>关于「{seed_question}」的多智能体协作研究。</div>
+
+    <div class="meta-row">
+      <span>BRAIN<strong>#{brain_id}</strong></span>
+      <span>VIEWS<strong>{view_count}</strong></span>
+      <span>SINCE<strong>{created_at}</strong></span>
+    </div>
+
+    <div class="actions">
+      {pdf_action}
+      <a class="btn btn-ghost" href="/ainstein">🧠 创建你自己的 AI 研究 <span class="arrow">→</span></a>
+    </div>
+
+    {abstract_section}
+
     <article>{body}</article>
-    <div class="footer">来自 AInstein 硬基大脑 · 公开研究报告</div>
-  </div>
+
+    <section class="footer-cta">
+      <h3>让 AI 变成你的私人研究员</h3>
+      <p>AInstein 用多智能体协作，把一个问题变成一篇可被引用的研究报告。</p>
+      <a class="btn btn-primary" href="/ainstein">免费启动一个大脑 <span class="arrow">→</span></a>
+    </section>
+
+    <footer class="footer">
+      <span>© AInstein 硅基大脑 · 公开研究报告</span>
+      <span>SHARE · {share_token_short}</span>
+    </footer>
+  </main>
 </body>
 </html>"""
 
@@ -1667,8 +1968,17 @@ def create_brain_paper_share(brain_id: int) -> Any:
 
 @app.route('/ainstein/api/public/papers/<share_token>', methods=['GET'])
 def public_paper_view(share_token: str) -> Any:
-    """公开论文阅读页（HTML，无需登录）。"""
+    """公开论文阅读页（HTML，无需登录）。
+
+    增强：
+    - 注入 Open Graph / Twitter Card meta，让微信、Twitter、Slack、Discord
+      等平台抓取分享链接时直接渲染富媒体卡片。
+    - 卡片化深空科技风落地页 + 摘要预览 + 双 CTA。
+    - 记录 paper.shared_page_viewed tracking 事件。
+    """
+    import html as _html
     from paper_generator import PAPERS_DIR
+
     share = db.get_paper_share(share_token)
     if not share:
         return Response('<h1>404</h1><p>分享链接不存在或已失效</p>',
@@ -1679,8 +1989,25 @@ def public_paper_view(share_token: str) -> Any:
 
     filename = share.get('filename') or ''
     brain_id = int(share.get('brain_id') or 0)
-    title = share.get('title') or f'AInstein Brain #{brain_id}'
-    created_at = share.get('created_at') or ''
+    raw_title = share.get('title') or f'AInstein Brain #{brain_id}'
+    created_at = (share.get('created_at') or '')[:10]
+
+    # 取关联大脑的 seed_question
+    seed_question = ''
+    try:
+        brain = db.get_brain(brain_id)
+        if brain:
+            seed_question = (brain.get('seed_question') or '').strip()
+    except Exception:
+        logger.exception('fetch brain seed_question failed brain_id=%s', brain_id)
+
+    # 截断 seed_question 用于 og:description（保留原始用于落地页）
+    seed_for_og = seed_question or raw_title
+    if len(seed_for_og) > 100:
+        seed_for_og = seed_for_og[:97] + '…'
+    seed_for_page = seed_question or raw_title
+    if len(seed_for_page) > 80:
+        seed_for_page = seed_for_page[:77] + '…'
 
     # 优先读取同名 md；若 share 存的是 pdf，则取同 base 的 md
     base = filename.rsplit('.', 1)[0]
@@ -1700,19 +2027,79 @@ def public_paper_view(share_token: str) -> Any:
         return Response('<h1>500</h1><p>读取论文失败</p>',
                         status=500, mimetype='text/html; charset=utf-8')
 
+    # 抽取摘要：取正文前 200 字（去掉标题行 / 代码块标记 / 多余空行）
+    abstract_src_lines: List[str] = []
+    in_code = False
+    for line in md_text.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('```'):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        if not stripped:
+            continue
+        if stripped.startswith('#'):
+            continue
+        if stripped.startswith(('![', '|', '---', '===')):
+            continue
+        abstract_src_lines.append(stripped)
+        if sum(len(s) for s in abstract_src_lines) >= 240:
+            break
+    abstract_text = ' '.join(abstract_src_lines).strip()
+    if len(abstract_text) > 200:
+        abstract_text = abstract_text[:200].rstrip() + '…'
+
     body = _markdown_to_simple_html(md_text)
+
     pdf_action = (
-        f'<div class="actions"><a class="btn" href="/ainstein/api/public/papers/{share_token}/pdf">下载 PDF</a></div>'
+        f'<a class="btn btn-primary" href="/ainstein/api/public/papers/{_html.escape(share_token)}/pdf">'
+        f'📥 下载 PDF <span class="arrow">→</span></a>'
         if has_pdf else ''
     )
+
+    abstract_section = (
+        f'<section class="abstract-card"><p>{_html.escape(abstract_text)}</p></section>'
+        if abstract_text else ''
+    )
+
+    og_image = 'https://hub.circlegpu.com/ainstein/static/og-default.png'
+    og_url = f'https://hub.circlegpu.com/ainstein/api/public/papers/{share_token}'
+    og_description = f'关于「{seed_for_og}」的 AI 多智能体协作研究报告 — AInstein 硅基大脑'
+    twitter_description = f'关于「{seed_for_og}」的 AI 多智能体协作研究报告'
+
     html_text = _PUBLIC_PAPER_TEMPLATE.format(
-        title=title,
+        title=_html.escape(raw_title),
+        seed_question=_html.escape(seed_for_page),
+        og_description=_html.escape(og_description, quote=True),
+        twitter_description=_html.escape(twitter_description, quote=True),
+        og_image=_html.escape(og_image, quote=True),
+        og_url=_html.escape(og_url, quote=True),
         brain_id=brain_id,
         view_count=view_count,
-        created_at=created_at,
+        created_at=_html.escape(created_at),
         pdf_action=pdf_action,
+        abstract_section=abstract_section,
         body=body,
+        share_token_short=_html.escape(share_token[:8]),
     )
+
+    # 公开访问无登录用户，user_id=None
+    try:
+        db.add_tracking_event(
+            None,
+            'paper.shared_page_viewed',
+            brain_id=brain_id,
+            metadata={
+                'share_token': share_token,
+                'paper_id': share.get('id'),
+                'view_count': view_count,
+                'has_pdf': has_pdf,
+            },
+        )
+    except Exception:
+        logger.exception('tracking paper.shared_page_viewed failed token=%s', share_token)
+
     resp = Response(html_text, mimetype='text/html; charset=utf-8')
     resp.headers['Cache-Control'] = 'no-cache'
     return resp
@@ -2019,6 +2406,56 @@ def admin_stats_leaderboard() -> Any:
     except Exception as exc:
         logger.exception('admin_stats_leaderboard failed')
         return jsonify({'error': str(exc)}), 500
+
+
+# ============================================================
+# 主脑日报公开路由（Task #17，无需认证）
+# ============================================================
+@app.route('/ainstein/api/public/master-daily', methods=['GET'])
+def public_master_daily_list() -> Any:
+    """最近 30 天主脑日报列表。"""
+    try:
+        limit = max(1, min(int(request.args.get('limit', 30)), 60))
+        digests = db.get_recent_digests(limit=limit)
+        return _no_cache(jsonify({'items': digests, 'count': len(digests)}))
+    except Exception as exc:
+        logger.exception('public_master_daily_list failed')
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/ainstein/api/public/master-daily/<date>', methods=['GET'])
+def public_master_daily_by_date(date: str) -> Any:
+    """按日期获取当日主脑日报（YYYY-MM-DD）。"""
+    try:
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', date or ''):
+            return jsonify({'error': 'invalid date format, expected YYYY-MM-DD'}), 400
+        digest = db.get_digest_by_date(date)
+        if not digest:
+            return jsonify({'error': 'not found', 'date': date}), 404
+        return _no_cache(jsonify(digest))
+    except Exception as exc:
+        logger.exception('public_master_daily_by_date failed')
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/ainstein/master-daily.rss', methods=['GET'])
+def public_master_daily_rss() -> Any:
+    """主脑日报 Atom Feed。"""
+    try:
+        from distribution import generate_rss_xml, AINSTEIN_BASE_URL
+        digests = db.get_recent_digests(limit=30)
+        base = (request.host_url or AINSTEIN_BASE_URL).rstrip('/')
+        xml = generate_rss_xml(digests, base)
+        resp = Response(xml, mimetype='application/atom+xml; charset=utf-8')
+        resp.headers['Cache-Control'] = 'public, max-age=600'
+        return resp
+    except Exception as exc:
+        logger.exception('public_master_daily_rss failed')
+        return Response(
+            '<?xml version="1.0" encoding="UTF-8"?><error>%s</error>' % str(exc),
+            status=500, mimetype='application/xml',
+        )
+
 
 
 if __name__ == '__main__':

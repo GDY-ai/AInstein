@@ -147,6 +147,25 @@ _HETEROGENEOUS_STIMULUS_COOLDOWN: float = 600.0
 
 
 # ============================================================
+# 快思考模式（Fast Mode）
+# ============================================================
+#: 快思考·收敛最小 CE 总数门槛（深度模式 50）
+_FAST_MODE_CE_LIMIT: int = 20
+#: 快思考·收敛置信度阈值（深度模式 0.9）
+_FAST_MODE_CONFIDENCE_THRESHOLD: float = 0.75
+#: 快思考·时间兜底上限（秒，深度模式 3600）
+_FAST_MODE_MAX_DURATION: float = 300.0
+#: 快思考·synthesizer 派遣最小 CE 门槛（深度模式 30）
+_FAST_MODE_SYNTHESIZER_MIN: int = 10
+#: 快思考·CE 数量兜底上限（深度模式 500）
+_FAST_MODE_FALLBACK_CE: int = 30
+#: 快思考·最低 CE 收敛门槛（深度模式 50）
+_FAST_MODE_MIN_CE_FOR_CONVERGENCE: int = 5
+#: 快思考·强制综合脉冲间隔（深度模式 20）
+_FAST_MODE_FORCE_SYNTHESIS_GAP: int = 8
+
+
+# ============================================================
 # 工具执行结果摘要化
 # ============================================================
 

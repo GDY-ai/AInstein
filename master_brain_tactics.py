@@ -671,3 +671,187 @@ def trigger_metacognitive_reflection(master_id: int, orchestrator) -> bool:
         master_id, getattr(observer, 'instance_id', None), len(branch_stats),
     )
     return True
+
+# ============================================================
+# Task #17: 主脑日报生成
+# ============================================================
+def _collect_master_digest_stats(master_id: int) -> Dict[str, Any]:
+    """统计前 24 小时的关键活动指标。"""
+    with get_db() as conn:
+        # 新增大脑（标准大脑，非主脑）
+        new_brains = conn.execute(
+            """
+            SELECT COUNT(*) FROM brains
+            WHERE COALESCE(brain_type,'standalone') != 'master'
+              AND created_at >= datetime('now', '-1 day')
+            """
+        ).fetchone()[0]
+
+        # 新增 CE
+        new_ces = conn.execute(
+            """
+            SELECT COUNT(*) FROM cognitive_elements
+            WHERE created_at >= datetime('now', '-1 day')
+            """
+        ).fetchone()[0]
+
+        # 主脑新增 CE
+        master_ces = 0
+        if master_id:
+            master_ces = conn.execute(
+                """
+                SELECT COUNT(*) FROM cognitive_elements
+                WHERE brain_id = ? AND created_at >= datetime('now', '-1 day')
+                """,
+                (master_id,),
+            ).fetchone()[0]
+
+        # 博弈数
+        new_deliberations = conn.execute(
+            """
+            SELECT COUNT(*) FROM deliberations
+            WHERE started_at >= datetime('now', '-1 day')
+            """
+        ).fetchone()[0]
+
+        # 最近主脑产出的高置信度 CE，作为"亮点"候选
+        highlights_rows: List[Dict[str, Any]] = []
+        if master_id:
+            highlights_rows = [dict(r) for r in conn.execute(
+                """
+                SELECT id, type, content, confidence
+                FROM cognitive_elements
+                WHERE brain_id = ?
+                  AND created_at >= datetime('now', '-1 day')
+                  AND status = 'open'
+                ORDER BY confidence DESC, created_at DESC
+                LIMIT 3
+                """,
+                (master_id,),
+            ).fetchall()]
+
+    return {
+        'new_brains': int(new_brains or 0),
+        'new_ces': int(new_ces or 0),
+        'master_ces': int(master_ces or 0),
+        'deliberations': int(new_deliberations or 0),
+        '_highlight_rows': highlights_rows,  # 内部用，最终不写入 stats
+    }
+
+
+def _build_fallback_digest(stats: Dict[str, Any]) -> Tuple[str, str, List[str]]:
+    """LLM 失败/未配置时的模板兜底。"""
+    title = f"主脑日报 · {time.strftime('%Y-%m-%d')}"
+    summary = (
+        f"过去 24 小时观察：新增大脑 {stats.get('new_brains', 0)} 个，"
+        f"沉淀认知元素 {stats.get('new_ces', 0)} 条，主脑产出 {stats.get('master_ces', 0)} 条，"
+        f"触发博弈 {stats.get('deliberations', 0)} 次。"
+    )
+    rows = stats.get('_highlight_rows', []) or []
+    highlights = []
+    for r in rows[:3]:
+        text = (r.get('content') or '').strip().replace('\n', ' ')
+        if len(text) > 80:
+            text = text[:78] + '…'
+        highlights.append(f"[{r.get('type','ce')}] {text}")
+    if not highlights:
+        highlights = ['今日主脑保持观察，未触发显著综合事件。']
+    return title, summary, highlights
+
+
+def generate_master_brain_digest(master_id: Optional[int]) -> Optional[Dict[str, Any]]:
+    """生成主脑日报。
+
+    返回 dict: {title, summary, highlights, stats, created_at, master_id}
+    若过去 24h 无活跃数据则返回 None（不应该发送日报）。
+    """
+    stats = _collect_master_digest_stats(master_id) if master_id else {
+        'new_brains': 0, 'new_ces': 0, 'master_ces': 0, 'deliberations': 0,
+        '_highlight_rows': [],
+    }
+
+    # 无活跃 → 跳过
+    is_idle = (
+        stats.get('new_brains', 0) == 0
+        and stats.get('new_ces', 0) == 0
+        and stats.get('master_ces', 0) == 0
+        and stats.get('deliberations', 0) == 0
+    )
+    if is_idle:
+        logger.info("过去 24h 无活跃数据，跳过主脑日报生成")
+        return None
+
+    # 暴露给前端的 stats（剔除内部字段）
+    public_stats = {k: v for k, v in stats.items() if not k.startswith('_')}
+
+    title: str
+    summary: str
+    highlights: List[str]
+
+    # ---- 调用 LLM 生成摘要 ----
+    try:
+        from agents.llm_client import call_llm
+        from config import DIRECTOR_MODEL
+
+        highlight_lines = []
+        for r in stats.get('_highlight_rows', [])[:5]:
+            text = (r.get('content') or '').strip().replace('\n', ' ')
+            if len(text) > 200:
+                text = text[:198] + '…'
+            highlight_lines.append(f"- [{r.get('type','ce')}](conf={r.get('confidence', 0):.2f}) {text}")
+        highlight_block = '\n'.join(highlight_lines) if highlight_lines else '(暂无显著产出)'
+
+        system_prompt = (
+            "你是 AInstein 创世主脑（Master Brain）的『主任日记官』。\n"
+            "请用第一人称，以 3-5 句话凝练过去 24 小时的研究观察日报，风格简洁、克制、可读。"
+            "禁止虚构未提供的数据；禁止使用 emoji。"
+        )
+        user_prompt = (
+            f"【过去 24 小时统计】\n"
+            f"- 新增大脑：{public_stats['new_brains']}\n"
+            f"- 新增认知元素：{public_stats['new_ces']}\n"
+            f"- 主脑自身产出：{public_stats['master_ces']}\n"
+            f"- 博弈触发：{public_stats['deliberations']}\n\n"
+            f"【主脑近 24h 高置信度产出】\n{highlight_block}\n\n"
+            "请输出严格 JSON：\n"
+            '{"title": "主脑日报 · YYYY-MM-DD", '
+            '"summary": "3-5 句一段式日报摘要", '
+            '"highlights": ["亮点 1", "亮点 2", "亮点 3"]}'
+        )
+
+        text = call_llm(
+            model=DIRECTOR_MODEL,
+            system_prompt=system_prompt,
+            messages=[{'role': 'user', 'content': user_prompt}],
+            max_tokens=1000,
+            temperature=0.5,
+        )
+
+        from agents.llm_client import extract_json
+        parsed = extract_json(text) if text else None
+        if isinstance(parsed, dict) and parsed.get('summary'):
+            title = (parsed.get('title') or f"主脑日报 · {time.strftime('%Y-%m-%d')}").strip()
+            summary = str(parsed.get('summary') or '').strip()
+            raw_highlights = parsed.get('highlights') or []
+            if isinstance(raw_highlights, list):
+                highlights = [str(h).strip() for h in raw_highlights if str(h).strip()][:5]
+            else:
+                highlights = []
+            if not highlights:
+                _, _, highlights = _build_fallback_digest(stats)
+        else:
+            logger.warning("LLM 返回无法解析为日报 JSON，使用模板兜底")
+            title, summary, highlights = _build_fallback_digest(stats)
+
+    except Exception as e:
+        logger.exception("LLM 生成主脑日报失败，使用模板兜底: %s", e)
+        title, summary, highlights = _build_fallback_digest(stats)
+
+    return {
+        'master_id': master_id,
+        'title': title,
+        'summary': summary,
+        'highlights': highlights,
+        'stats': public_stats,
+        'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+    }

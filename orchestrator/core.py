@@ -37,6 +37,10 @@ from .constants import (
     _DEFAULT_SPAWN_ROLES,
     _FALLBACK_CE_COUNT,
     _FALLBACK_DURATION_SECONDS,
+    _FAST_MODE_CONFIDENCE_THRESHOLD,
+    _FAST_MODE_FALLBACK_CE,
+    _FAST_MODE_MAX_DURATION,
+    _FAST_MODE_MIN_CE_FOR_CONVERGENCE,
     _INITIAL_BACKOFF,
     _LOOP_ERROR_COOLDOWN,
     _MAX_BACKOFF,
@@ -520,6 +524,21 @@ class ATAOrchestrator(
         if state is None or state.fallback_triggered:
             return False
 
+        # 读取大脑模式配置（fast 模式使用更小的阈值）
+        is_fast = False
+        try:
+            master_id = _db.get_master_brain_id()
+            if master_id is None or brain_id != master_id:
+                cfg = _db.get_brain_config(brain_id)
+                is_fast = (cfg.get("mode") == "fast")
+        except Exception:
+            logger.exception(
+                "[fallback-trigger] 读取 brain.config 失败 brain=%s", brain_id,
+            )
+
+        fb_ce = _FAST_MODE_FALLBACK_CE if is_fast else _FALLBACK_CE_COUNT
+        fb_dur = _FAST_MODE_MAX_DURATION if is_fast else _FALLBACK_DURATION_SECONDS
+
         # 条件 1：CE 总数
         try:
             ce_count = _db.count_cognitive_elements(brain_id)
@@ -527,10 +546,10 @@ class ATAOrchestrator(
             logger.exception("[fallback-trigger] 查询 CE 总数失败 brain=%s", brain_id)
             ce_count = 0
 
-        if ce_count >= _FALLBACK_CE_COUNT:
+        if ce_count >= fb_ce:
             logger.info(
-                "[fallback-trigger] brain=%s CE 总数=%d >= %d，触发兜底",
-                brain_id, ce_count, _FALLBACK_CE_COUNT,
+                "[fallback-trigger] brain=%s CE 总数=%d >= %d (mode=%s)，触发兜底",
+                brain_id, ce_count, fb_ce, "fast" if is_fast else "deep",
             )
             return True
 
@@ -553,10 +572,11 @@ class ATAOrchestrator(
                     "[fallback-trigger] 解析 brains.started_at 失败 brain=%s", brain_id,
                 )
 
-        if duration >= _FALLBACK_DURATION_SECONDS:
+        if duration >= fb_dur:
             logger.info(
-                "[fallback-trigger] brain=%s 运行时长=%.1fs >= %.1fs，触发兜底",
-                brain_id, duration, _FALLBACK_DURATION_SECONDS,
+                "[fallback-trigger] brain=%s 运行时长=%.1fs >= %.1fs (mode=%s)，"
+                "触发兜底",
+                brain_id, duration, fb_dur, "fast" if is_fast else "deep",
             )
             return True
 
@@ -624,17 +644,15 @@ class ATAOrchestrator(
         条件：存在 conclusion CE 且置信度 > 阈值，**并且**该 conclusion 的
         内容与种子问题具有语义相关性（包含种子问题的核心关键词）。
 
-        来源可以是：
-        1. synthesizer 角色产出的 conclusion CE；
-        2. 博弈引擎产出的 conclusion CE（created_by_agent_id 为 NULL）。
-
-        注意数据库字段名（务必与 schema 一致）：
-            - ``cognitive_elements.type``（不是 ce_type）
-            - ``agent_instances.role_key``（不是 role）
+        快思考模式（config.mode == 'fast'）下使用更宽松的阈值，并启用时间兜底：
+            - 置信度阈值：0.75（深度 0.9）
+            - 最低 CE 数量：5（深度 50）
+            - 时间兜底：超过 300s 强制收敛
+            - 跳过种子语义关键词匹配
 
         :return: True 表示已达成共识，应当停止思考循环。
         """
-        # 主脑永不自动收敛（事件驱动、不走循环）
+        # 主脑永不自动收敛（事件驱动、不走循环）+ 也永不受快思考模式影响
         try:
             master_id = _db.get_master_brain_id()
             if master_id is not None and brain_id == master_id:
@@ -642,14 +660,58 @@ class ATAOrchestrator(
         except Exception:
             logger.exception("_check_convergence 读取主脑 id 失败 brain=%s", brain_id)
 
-        # 最小 CE 数量门槛：CE 总数不足 _CONVERGENCE_MIN_CE_COUNT 时禁止收敛
-        # （目标：避免大脑只产出几十个 CE 就草率收尾，强制深化思考）
+        # ---- 读取大脑模式配置 ----
+        mode = "deep"
+        try:
+            mode = _db.get_brain_config(brain_id).get("mode") or "deep"
+        except Exception:
+            logger.exception(
+                "_check_convergence 读取 brain.config 失败 brain=%s，按 deep 模式处理",
+                brain_id,
+            )
+        is_fast = (mode == "fast")
+
+        if is_fast:
+            min_ce = _FAST_MODE_MIN_CE_FOR_CONVERGENCE
+            conf_threshold = _FAST_MODE_CONFIDENCE_THRESHOLD
+        else:
+            min_ce = _CONVERGENCE_MIN_CE_COUNT
+            conf_threshold = _CONVERGENCE_CONFIDENCE_THRESHOLD
+
+        # ---- 快思考·时间兜底：超过 _FAST_MODE_MAX_DURATION 强制收敛 ----
+        if is_fast:
+            try:
+                state = self.brains.get(brain_id)
+                if state and state.started_at:
+                    duration = time.time() - state.started_at
+                    if duration >= _FAST_MODE_MAX_DURATION:
+                        logger.info(
+                            "[fast-mode] brain=%s 运行时长=%.1fs >= %.1fs，"
+                            "时间兜底强制收敛",
+                            brain_id, duration, _FAST_MODE_MAX_DURATION,
+                        )
+                        # 兜底前先触发一次最终综合（如果还没触发过）
+                        try:
+                            if not state.fallback_triggered:
+                                self._force_synthesizer_conclusion(brain_id)
+                        except Exception:
+                            logger.exception(
+                                "[fast-mode] brain=%s 兜底综合触发异常", brain_id,
+                            )
+                        return True
+            except Exception:
+                logger.exception(
+                    "[fast-mode] brain=%s 时间兜底检测异常", brain_id,
+                )
+
+        # 最小 CE 数量门槛
         try:
             ce_count = _db.count_cognitive_elements(brain_id)
-            if ce_count < _CONVERGENCE_MIN_CE_COUNT:
+            if ce_count < min_ce:
                 logger.debug(
-                    "[convergence] brain=%s CE 总数=%d < %d，未达最小门槛，禁止收敛",
-                    brain_id, ce_count, _CONVERGENCE_MIN_CE_COUNT,
+                    "[convergence] brain=%s CE 总数=%d < %d (mode=%s)，"
+                    "未达最小门槛，禁止收敛",
+                    brain_id, ce_count, min_ce, mode,
                 )
                 return False
         except Exception:
@@ -662,12 +724,20 @@ class ATAOrchestrator(
             rows = _db.get_high_confidence_ces(
                 brain_id,
                 _CONVERGENCE_CE_TYPE,
-                _CONVERGENCE_CONFIDENCE_THRESHOLD,
+                conf_threshold,
                 limit=10,
             )
             if not rows:
                 return False
-            # 检查是否有 conclusion 与种子问题语义相关
+            # 快模式下跳过种子语义关键词匹配，直接收敛
+            if is_fast:
+                logger.info(
+                    "[fast-mode] brain=%s 已有 %d 个高置信度 conclusion "
+                    "(threshold=%.2f)，直接收敛",
+                    brain_id, len(rows), conf_threshold,
+                )
+                return True
+            # 深度模式：检查 conclusion 与种子问题语义相关
             return self._any_conclusion_answers_seed(brain_id, rows)
         except Exception:
             logger.exception("_check_convergence 查询失败 brain=%s", brain_id)

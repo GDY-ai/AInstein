@@ -41,6 +41,8 @@ from .constants import (
     _EVENT_TO_ROLES,
     _EXPLORATION_CONSOLIDATION_RATIO,
     _EXPLORATION_TYPES,
+    _FAST_MODE_FORCE_SYNTHESIS_GAP,
+    _FAST_MODE_SYNTHESIZER_MIN,
     _FORCED_SYNTHESIS_INTERVAL,
     _HETEROGENEOUS_STIMULUS_COOLDOWN,
     _IDLE_ROLE_PRIORITY,
@@ -353,12 +355,29 @@ class StrategyMixin:
                → converge
             4. 否则 explore
         """
+        # 读取大脑模式配置
+        is_fast = False
+        try:
+            master_id = _db.get_master_brain_id()
+            if master_id is None or brain_id != master_id:
+                cfg = _db.get_brain_config(brain_id)
+                is_fast = (cfg.get("mode") == "fast")
+        except Exception:
+            logger.exception(
+                "[convergence-pressure] 读取 brain.config 失败 brain=%s", brain_id,
+            )
+
+        force_interval = (
+            _FAST_MODE_FORCE_SYNTHESIS_GAP if is_fast else _FORCED_SYNTHESIS_INTERVAL
+        )
+
         try:
             recent = _db.get_recent_ce_types(
                 brain_id, _CONVERGENCE_PRESSURE_WINDOW
             )
 
-            if len(recent) < _CONVERGENCE_PRESSURE_WINDOW:
+            # 快模式跳过「最近窗口样本不足时保持探索」的逻辑，直接允许收敛
+            if not is_fast and len(recent) < _CONVERGENCE_PRESSURE_WINDOW:
                 return "explore"  # 样本不足，保持探索
 
             total_ce = _db.count_cognitive_elements(brain_id)
@@ -379,8 +398,8 @@ class StrategyMixin:
         ces_since_last_synthesis = total_ce - last_synthesis_ce_id
         ces_since_last_pulse = total_ce - last_pulse_total
         if (
-            ces_since_last_synthesis >= _FORCED_SYNTHESIS_INTERVAL
-            and ces_since_last_pulse >= _FORCED_SYNTHESIS_INTERVAL
+            ces_since_last_synthesis >= force_interval
+            and ces_since_last_pulse >= force_interval
         ):
             logger.info(
                 "[convergence-pressure] brain=%s force_synthesis "

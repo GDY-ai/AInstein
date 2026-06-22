@@ -359,6 +359,21 @@ CREATE TABLE IF NOT EXISTS user_achievements (
 );
 CREATE INDEX IF NOT EXISTS idx_ua_user ON user_achievements(user_id);
 CREATE INDEX IF NOT EXISTS idx_ua_key ON user_achievements(achievement_key);
+
+-- ========= 主脑日报（Task #17 主脑日报分发） =========
+
+CREATE TABLE IF NOT EXISTS digest_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    master_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    highlights_json TEXT,
+    stats_json TEXT,
+    distribution_status TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dl_master ON digest_logs(master_id);
+CREATE INDEX IF NOT EXISTS idx_dl_created ON digest_logs(created_at);
 """
 
 
@@ -376,9 +391,27 @@ def _migrate_add_master_brain_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE brains ADD COLUMN brain_type TEXT NOT NULL DEFAULT 'standalone'")
     if 'think_count' not in columns:
         conn.execute("ALTER TABLE brains ADD COLUMN think_count INTEGER NOT NULL DEFAULT 0")
+    # 快思考模式（Task #15）：config_json 列在新 schema 中已存在；
+    # 兼容旧库缺列场景，做防御性 ALTER。
+    if 'config_json' not in columns:
+        conn.execute("ALTER TABLE brains ADD COLUMN config_json TEXT DEFAULT '{}'")
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_brains_parent ON brains(parent_brain_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_brains_type ON brains(brain_type)")
+
+
+def _migrate_add_github_columns(conn: sqlite3.Connection) -> None:
+    """为 users 表新增 GitHub OAuth 字段（幂等迁移）。
+
+    - ``github_id``：GitHub 用户 id（精确匹配，去重靠唯一索引）
+    - ``avatar_url``：GitHub 头像地址（用于前端展示）
+    """
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if 'github_id' not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN github_id INTEGER")
+    if 'avatar_url' not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN avatar_url TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id) WHERE github_id IS NOT NULL")
 
 
 def _ensure_master_brain(conn: sqlite3.Connection) -> None:
@@ -413,6 +446,7 @@ def init_db() -> None:
         conn.executescript(_SCHEMA)
         conn.executescript(_SCHEMA_SILICON_BRAIN)
         _migrate_add_master_brain_columns(conn)
+        _migrate_add_github_columns(conn)
         _ensure_master_brain(conn)
     logger.info(f"Database initialized at {DB_PATH} (legacy + silicon_brain schemas applied)")
 
@@ -686,6 +720,26 @@ def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
 
 
+def get_user_by_github_id(github_id: int) -> Optional[Dict[str, Any]]:
+    """按 GitHub 用户 id 查找已绑定的本地账号。"""
+    if github_id is None:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE github_id=?", (int(github_id),)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def update_user_github_info(user_id: int, github_id: int, avatar_url: Optional[str]) -> None:
+    """补写/刷新本地用户的 GitHub 绑定信息（幂等）。"""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET github_id=?, avatar_url=COALESCE(?, avatar_url) WHERE id=?",
+            (int(github_id), avatar_url, int(user_id))
+        )
+
+
 # === Brains ===
 
 def create_brain(name: str, seed_question: str, owner_user_id: int, config: Optional[Dict[str, Any]] = None,
@@ -706,6 +760,24 @@ def get_brain(brain_id: int) -> Optional[Dict[str, Any]]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM brains WHERE id=?", (brain_id,)).fetchone()
         return dict(row) if row else None
+
+def get_brain_config(brain_id: int) -> Dict[str, Any]:
+    """读取大脑的 config（解析 config_json）。
+
+    旧数据若无 config 或解析失败，返回空 dict（调用方应按深度模式兜底）。
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT config_json FROM brains WHERE id=?", (brain_id,)
+        ).fetchone()
+        if not row:
+            return {}
+        raw = row["config_json"] if isinstance(row, sqlite3.Row) else row[0]
+        try:
+            cfg = json.loads(raw or "{}")
+            return cfg if isinstance(cfg, dict) else {}
+        except (TypeError, ValueError):
+            return {}
 
 def get_brains(owner_user_id: Optional[int] = None, state: Optional[str] = None) -> List[Dict[str, Any]]:
     with get_db() as conn:
@@ -1916,3 +1988,205 @@ def auto_create_discoveries(brain_id: int, threshold: float = 0.75, limit: int =
         if new_id:
             created += 1
     return created
+
+
+# ============================================================
+# Digest Logs (Task #17: 主脑日报)
+# ============================================================
+
+def save_digest_log(master_id: int, title: str, summary: str,
+                    highlights: Optional[List[str]] = None,
+                    stats: Optional[Dict[str, Any]] = None) -> int:
+    """保存日报记录，返回新记录 id。"""
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO digest_logs (master_id, title, summary, highlights_json, stats_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (master_id, title, summary,
+             json.dumps(highlights or [], ensure_ascii=False),
+             json.dumps(stats or {}, ensure_ascii=False)),
+        )
+        return cur.lastrowid
+
+
+def get_recent_digests(limit: int = 30) -> List[Dict[str, Any]]:
+    """获取最近 N 条日报。"""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, master_id, title, summary, highlights_json, stats_json, "
+            "distribution_status, created_at FROM digest_logs "
+            "ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['highlights'] = json.loads(d.pop('highlights_json') or '[]')
+        except (TypeError, ValueError):
+            d['highlights'] = []
+            d.pop('highlights_json', None)
+        try:
+            d['stats'] = json.loads(d.pop('stats_json') or '{}')
+        except (TypeError, ValueError):
+            d['stats'] = {}
+            d.pop('stats_json', None)
+        result.append(d)
+    return result
+
+
+def get_digest_by_date(date_str: str) -> Optional[Dict[str, Any]]:
+    """获取指定日期的日报（date_str 格式 YYYY-MM-DD）。"""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id, master_id, title, summary, highlights_json, stats_json, "
+            "distribution_status, created_at FROM digest_logs "
+            "WHERE date(created_at) = ? ORDER BY created_at DESC LIMIT 1",
+            (date_str,),
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d['highlights'] = json.loads(d.pop('highlights_json') or '[]')
+    except (TypeError, ValueError):
+        d['highlights'] = []
+        d.pop('highlights_json', None)
+    try:
+        d['stats'] = json.loads(d.pop('stats_json') or '{}')
+    except (TypeError, ValueError):
+        d['stats'] = {}
+        d.pop('stats_json', None)
+    return d
+
+
+def update_digest_status(digest_id: int, status: str) -> None:
+    """更新日报分发状态。"""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE digest_logs SET distribution_status=? WHERE id=?",
+            (status, digest_id),
+        )
+
+
+# ============================================================
+# 主脑日报（digest_logs） — Task #17
+# ============================================================
+def _ensure_digest_logs_table() -> None:
+    """惰性建表：digest_logs。
+
+    在 init_db 已运行后追加调用即可；首次访问 CRUD 时也会兜底建表。
+    """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS digest_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                master_id INTEGER,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                highlights_json TEXT NOT NULL DEFAULT '[]',
+                stats_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'saved',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                date_str TEXT NOT NULL DEFAULT (date('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_digest_logs_date ON digest_logs(date_str)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_digest_logs_created ON digest_logs(created_at DESC)"
+        )
+
+
+# 在 init_db 之后立即建表（保证模块导入即可用）
+try:
+    _ensure_digest_logs_table()
+except Exception as _e:
+    logger.warning("digest_logs 建表延后（init_db 未就绪）: %s", _e)
+
+
+def _row_to_digest(row: Any) -> Dict[str, Any]:
+    if row is None:
+        return {}
+    d = dict(row)
+    try:
+        d['highlights'] = json.loads(d.pop('highlights_json', '[]') or '[]')
+    except (json.JSONDecodeError, TypeError):
+        d['highlights'] = []
+    try:
+        d['stats'] = json.loads(d.pop('stats_json', '{}') or '{}')
+    except (json.JSONDecodeError, TypeError):
+        d['stats'] = {}
+    return d
+
+
+def save_digest_log(master_id: Optional[int],
+                    title: str,
+                    summary: str,
+                    highlights: Optional[List[Any]] = None,
+                    stats: Optional[Dict[str, Any]] = None) -> int:
+    """保存一条日报记录，返回 digest_id。"""
+    _ensure_digest_logs_table()
+    highlights_json = json.dumps(highlights or [], ensure_ascii=False)
+    stats_json = json.dumps(stats or {}, ensure_ascii=False)
+    with get_db() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO digest_logs (master_id, title, summary, highlights_json, stats_json, status)
+            VALUES (?, ?, ?, ?, ?, 'saved')
+            """,
+            (master_id, title, summary or '', highlights_json, stats_json),
+        )
+        return int(cur.lastrowid)
+
+
+def get_recent_digests(limit: int = 30) -> List[Dict[str, Any]]:
+    """按 created_at DESC 返回最近 N 条日报。"""
+    _ensure_digest_logs_table()
+    limit = max(1, min(int(limit or 30), 200))
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, master_id, title, summary, highlights_json, stats_json,
+                   status, created_at, date_str
+            FROM digest_logs
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [_row_to_digest(r) for r in rows]
+
+
+def get_digest_by_date(date_str: str) -> Optional[Dict[str, Any]]:
+    """按日期返回当天最新一条日报（YYYY-MM-DD）。"""
+    _ensure_digest_logs_table()
+    if not date_str:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT id, master_id, title, summary, highlights_json, stats_json,
+                   status, created_at, date_str
+            FROM digest_logs
+            WHERE date_str = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (date_str,),
+        ).fetchone()
+    return _row_to_digest(row) if row else None
+
+
+def update_digest_status(digest_id: int, status: str) -> bool:
+    """更新日报发布状态：saved / published / failed 等。"""
+    _ensure_digest_logs_table()
+    if not digest_id:
+        return False
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE digest_logs SET status=? WHERE id=?",
+            (status or 'saved', int(digest_id)),
+        )
+        return cur.rowcount > 0

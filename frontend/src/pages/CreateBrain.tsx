@@ -26,6 +26,7 @@ export default function CreateBrain() {
   const navigate = useNavigate()
   const [name, setName] = useState('')
   const [seed, setSeed] = useState('')
+  const [mode, setMode] = useState<'fast' | 'deep'>('fast')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [stage, setStage] = useState<'compose' | 'launching'>('compose')
@@ -54,6 +55,7 @@ export default function CreateBrain() {
       const r = await api.createBrain({
         name: finalName,
         seed_question: seedText,
+        config: { mode },
       })
       // 短暂展示「点燃」动画后跳转
       setTimeout(() => {
@@ -118,6 +120,28 @@ export default function CreateBrain() {
           <div style={charCounterStyle}>
             <span>{seed.length} / 1000</span>
             <span style={{ color: 'var(--text2)' }}>⌘ + Enter 提交</span>
+          </div>
+
+          <div style={modeSelectorStyle}>
+            <div style={fieldLabel}>思考模式</div>
+            <div style={modeOptionsRow}>
+              <button
+                type="button"
+                onClick={() => setMode('fast')}
+                style={modeChipStyle(mode === 'fast')}
+              >
+                <div style={modeChipTitleStyle(mode === 'fast')}>⚡ 快思考</div>
+                <div style={modeChipDescStyle}>约 5 分钟内收敛，适合首次体验</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('deep')}
+                style={modeChipStyle(mode === 'deep')}
+              >
+                <div style={modeChipTitleStyle(mode === 'deep')}>🧠 深度思考</div>
+                <div style={modeChipDescStyle}>5–60 分钟充分博弈，产出高置信度结论</div>
+              </button>
+            </div>
           </div>
 
           <details style={advancedStyle}>
@@ -321,6 +345,35 @@ const contractTitle: CSSProperties = {
 const contractList: CSSProperties = {
   margin: 0, paddingLeft: 18,
   color: 'var(--text2)', fontSize: 13, lineHeight: 1.9,
+}
+
+const modeSelectorStyle: CSSProperties = { marginTop: 18 }
+const modeOptionsRow: CSSProperties = {
+  display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8,
+}
+const modeChipStyle = (active: boolean): CSSProperties => ({
+  textAlign: 'left',
+  padding: '12px 14px',
+  borderRadius: 10,
+  border: active
+    ? '1px solid rgba(129,140,248,0.85)'
+    : '1px solid var(--border)',
+  background: active
+    ? 'linear-gradient(135deg, rgba(99,102,241,0.20), rgba(236,72,153,0.16))'
+    : 'var(--bg)',
+  color: 'var(--text)',
+  cursor: 'pointer',
+  transition: 'all .2s',
+  boxShadow: active ? '0 8px 22px rgba(99,102,241,0.25)' : 'none',
+})
+const modeChipTitleStyle = (active: boolean): CSSProperties => ({
+  fontSize: 14,
+  fontWeight: 600,
+  color: active ? 'var(--accent2)' : 'var(--text)',
+  marginBottom: 4,
+})
+const modeChipDescStyle: CSSProperties = {
+  fontSize: 11, color: 'var(--text2)', lineHeight: 1.5,
 }
 
 // === Launching screen ===

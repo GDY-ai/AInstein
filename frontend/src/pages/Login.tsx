@@ -106,6 +106,18 @@ export default function Login() {
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
+  // OAuth 回调失败展示提示
+  const [oauthError, setOauthError] = useState('')
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('error') === 'oauth_failed') {
+      setOauthError('GitHub 授权失败，请重试或使用账号密码登录')
+      // 清掉 URL 上的错误参数，避免刷新重复弹出
+      const url = window.location.pathname + window.location.hash
+      window.history.replaceState({}, '', url)
+    }
+  }, [])
+
   useEffect(() => {
     if (getToken()) {
       navigate('/brains', { replace: true })
@@ -312,6 +324,41 @@ export default function Login() {
             </button>
           </form>
 
+          {/* OAuth 失败提示（GitHub 回调 error） */}
+          {oauthError && (
+            <div style={{ ...errorStyle, marginTop: 12, marginBottom: 0 }}>⚠ {oauthError}</div>
+          )}
+
+          {/* — 或 —  分隔线 */}
+          <div style={dividerWrap}>
+            <div style={dividerLine} />
+            <span style={dividerText}>或</span>
+            <div style={dividerLine} />
+          </div>
+
+          {/* GitHub OAuth 登录按钮 */}
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = '/ainstein/api/auth/github/authorize'
+            }}
+            style={githubBtnStyle}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#1f2229'
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.18)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = '#0d1117'
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'
+            }}
+            aria-label="使用 GitHub 账号登录"
+          >
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+            </svg>
+            <span>使用 GitHub 登录</span>
+          </button>
+
           <div style={hintStyle}>
             {mode === 'login' ? (
               <>还没有账户？ <a onClick={() => switchMode('register')} style={linkStyle}>立即注册</a></>
@@ -463,4 +510,29 @@ const sloganStyle: CSSProperties = {
 
 const footerStyle: CSSProperties = {
   textAlign: 'center', color: 'var(--text2)', fontSize: 11, letterSpacing: 2,
+}
+
+/* —— GitHub OAuth 区域样式 —— */
+const dividerWrap: CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 12,
+  margin: '20px 0 14px', color: 'var(--text2)',
+}
+const dividerLine: CSSProperties = {
+  flex: 1, height: 1,
+  background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent)',
+}
+const dividerText: CSSProperties = {
+  fontSize: 11, letterSpacing: 4, opacity: 0.7,
+}
+const githubBtnStyle: CSSProperties = {
+  width: '100%',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+  background: '#0d1117',
+  color: '#fff',
+  border: '1px solid rgba(255,255,255,0.10)',
+  borderRadius: 8,
+  padding: '11px 12px',
+  fontSize: 14, fontWeight: 600, letterSpacing: 0.5,
+  cursor: 'pointer',
+  transition: 'background .2s, border-color .2s, transform .15s',
 }

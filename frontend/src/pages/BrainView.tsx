@@ -92,6 +92,8 @@ export default function BrainView() {
   const [, setSummaryLoading] = useState(false)
   const [summaryExpanded, setSummaryExpanded] = useState(false)
   const brainState = brain?.state
+  const brainMode: 'fast' | 'deep' = ((brain?.config as any)?.mode === 'fast') ? 'fast' : 'deep'
+  const [fastRemain, setFastRemain] = useState<number | null>(null)
 
   // ---------- 研究报告生成状态机 ----------
   const [paperState, setPaperState] = useState<'idle' | 'processing' | 'done' | 'error'>('idle')
@@ -114,6 +116,23 @@ export default function BrainView() {
       track('page.view', { page: 'brain_view', brain_id: bid })
     }
   }, [bid])
+
+  // 快思考模式倒计时（5 分钟兜底）
+  useEffect(() => {
+    if (brainMode !== 'fast' || brainState !== 'active' || !brain?.started_at) {
+      setFastRemain(null)
+      return
+    }
+    const startTs = new Date(brain.started_at.replace(' ', 'T') + 'Z').getTime()
+    const tick = () => {
+      const elapsed = (Date.now() - startTs) / 1000
+      const remain = Math.max(0, Math.ceil(300 - elapsed))
+      setFastRemain(remain)
+    }
+    tick()
+    const t = window.setInterval(tick, 1000)
+    return () => window.clearInterval(t)
+  }, [brainMode, brainState, brain?.started_at])
 
   async function handleGeneratePaper() {
     try {
@@ -732,6 +751,16 @@ export default function BrainView() {
               <span style={{ fontSize: 11, color: 'var(--text2)', letterSpacing: 3 }}>SILICON · BRAIN</span>
               <h1 style={{ fontSize: 20, color: 'var(--accent2)', margin: 0 }}>大脑 #{bid}</h1>
               <span style={pulseDot} title="实时同步中" />
+              {brain?.brain_type !== 'master' && (
+                <span style={modeBadgeStyle(brainMode)} title={brainMode === 'fast' ? '快思考模式：约 5 分钟内收敛' : '深度思考模式：5–60 分钟充分博弈'}>
+                  {brainMode === 'fast' ? '⚡ 快思考' : '🧠 深度思考'}
+                  {brainMode === 'fast' && fastRemain !== null && (
+                    <span style={modeBadgeCountdownStyle}>
+                      {'  '}剩余 {Math.floor(fastRemain / 60)}:{String(fastRemain % 60).padStart(2, '0')}
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>
               {(() => {
@@ -1452,4 +1481,30 @@ const shareCloseBtn: React.CSSProperties = {
   fontSize: 22,
   lineHeight: 1,
   padding: 0,
+}
+
+
+// 快思考模式 badge 样式
+const modeBadgeStyle = (mode: 'fast' | 'deep'): React.CSSProperties => ({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '3px 10px',
+  borderRadius: 999,
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: 1,
+  border: mode === 'fast'
+    ? '1px solid rgba(251,191,36,0.55)'
+    : '1px solid rgba(129,140,248,0.55)',
+  background: mode === 'fast'
+    ? 'linear-gradient(135deg, rgba(251,191,36,0.18), rgba(249,115,22,0.18))'
+    : 'linear-gradient(135deg, rgba(99,102,241,0.18), rgba(236,72,153,0.18))',
+  color: mode === 'fast' ? '#fbbf24' : '#c7d2fe',
+})
+const modeBadgeCountdownStyle: React.CSSProperties = {
+  marginLeft: 4,
+  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+  color: 'var(--text2)',
+  fontWeight: 500,
 }

@@ -242,6 +242,18 @@ export const api = {
     request('/users/me/achievements') as Promise<MyAchievementsResponse>,
   getLeaderboard: () =>
     request('/leaderboard') as Promise<LeaderboardResponse>,
+
+  // === 主脑日报（Task #17 公开接口）===
+  getMasterDailyList: async () => {
+    const resp = await fetch('/ainstein/api/public/master-daily');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp.json() as Promise<{ digests: any[] }>;
+  },
+  getMasterDailyByDate: async (date: string) => {
+    const resp = await fetch(`/ainstein/api/public/master-daily/${date}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp.json();
+  },
 };
 
 // 命名导出方便直接 import
