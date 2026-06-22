@@ -1,10 +1,12 @@
 import { type CSSProperties } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { getStoredUser } from '../api'
 
 /* ============================================================
  * AdminNav · 统一深空风导航
  *  在 我的大脑 / 态势大屏 / 发现广场 / 运营仪表盘 四页顶部使用。
  *  全中文标签，简洁的毛玻璃 + 青蓝强调。
+ *  态势大屏 / 发现广场 / 运营仪表盘 仅对 admin 角色用户可见。
  * ============================================================ */
 
 export type AdminNavKey = 'home' | 'bigscreen' | 'discoveries' | 'dashboard'
@@ -19,11 +21,20 @@ interface Props {
   showBack?: boolean
 }
 
-const NAV_ITEMS: Array<{ key: AdminNavKey; label: string; path: string; idx: string }> = [
+interface NavItem {
+  key: AdminNavKey
+  label: string
+  path: string
+  idx: string
+  /** 仅 admin 角色可见 */
+  adminOnly?: boolean
+}
+
+const NAV_ITEMS: NavItem[] = [
   { key: 'home', label: '我的大脑', path: '/brains', idx: '01' },
-  { key: 'bigscreen', label: '态势大屏', path: '/admin/bigscreen', idx: '02' },
-  { key: 'discoveries', label: '发现广场', path: '/discoveries', idx: '03' },
-  { key: 'dashboard', label: '运营仪表盘', path: '/admin/dashboard', idx: '04' },
+  { key: 'bigscreen', label: '态势大屏', path: '/admin/bigscreen', idx: '02', adminOnly: true },
+  { key: 'discoveries', label: '发现广场', path: '/discoveries', idx: '03', adminOnly: true },
+  { key: 'dashboard', label: '运营仪表盘', path: '/admin/dashboard', idx: '04', adminOnly: true },
 ]
 
 const FONT_MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
@@ -39,6 +50,9 @@ const FAINT = '#475569'
 export default function AdminNav({ active, floating = false, rightSlot, showBack = true }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
+  const currentUser = getStoredUser()
+  const isAdmin = (currentUser?.role || '').toLowerCase() === 'admin'
+  const visibleItems = NAV_ITEMS.filter((it) => !it.adminOnly || isAdmin)
 
   return (
     <nav style={floating ? floatingWrapStyle : staticWrapStyle}>
@@ -81,7 +95,7 @@ export default function AdminNav({ active, floating = false, rightSlot, showBack
       </div>
 
       <div style={navGroupStyle}>
-        {NAV_ITEMS.map((it) => {
+        {visibleItems.map((it) => {
           const isActive = it.key === active
           return (
             <button

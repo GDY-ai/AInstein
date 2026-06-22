@@ -414,6 +414,21 @@ def _migrate_add_github_columns(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id) WHERE github_id IS NOT NULL")
 
 
+def _ensure_id1_admin(conn: sqlite3.Connection) -> None:
+    """幂等保证 id=1 的用户为 admin 角色。
+
+    背景：「态势大屏 / 发现广场 / 运营仪表盘」三个入口仅对 admin 可见，
+    第一个注册用户在 register 流程中已被赋予 admin，本迁移用于补齐
+    历史数据库中 id=1 用户角色异常（例如手工修改、早期版本）的场景。
+    若 users 表为空，则跳过；不会改写其它用户的角色。
+    """
+    row = conn.execute("SELECT id, role FROM users WHERE id=1").fetchone()
+    if row is None:
+        return
+    if (row['role'] or '').lower() != 'admin':
+        conn.execute("UPDATE users SET role='admin' WHERE id=1")
+
+
 def _ensure_master_brain(conn: sqlite3.Connection) -> None:
     """确保创世主脑存在（按 brain_type='master' 查询，避免依赖固定 id）。
 
@@ -447,6 +462,7 @@ def init_db() -> None:
         conn.executescript(_SCHEMA_SILICON_BRAIN)
         _migrate_add_master_brain_columns(conn)
         _migrate_add_github_columns(conn)
+        _ensure_id1_admin(conn)
         _ensure_master_brain(conn)
     logger.info(f"Database initialized at {DB_PATH} (legacy + silicon_brain schemas applied)")
 

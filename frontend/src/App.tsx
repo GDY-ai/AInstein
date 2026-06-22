@@ -10,11 +10,24 @@ import BigScreen from './pages/BigScreen'
 import Discoveries from './pages/Discoveries'
 import MasterDaily from './pages/MasterDaily'
 import AdminDashboard from './pages/AdminDashboard'
-import { api, getToken, setStoredUser, setToken } from './api'
+import { api, getStoredUser, getToken, setStoredUser, setToken } from './api'
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const token = getToken()
   if (!token) return <Navigate to="/login" replace />
+  return children
+}
+
+/**
+ * 管理员路由守卫：未登录跳 /login；已登录但非 admin 角色跳回 /brains。
+ * 用于保护「态势大屏 / 发现广场 / 运营仪表盘」入口。
+ */
+function RequireAdmin({ children }: { children: JSX.Element }) {
+  const token = getToken()
+  if (!token) return <Navigate to="/login" replace />
+  const user = getStoredUser()
+  const isAdmin = (user?.role || '').toLowerCase() === 'admin'
+  if (!isAdmin) return <Navigate to="/brains" replace />
   return children
 }
 
@@ -99,16 +112,30 @@ export default function App() {
           </RequireAuth>
         }
       />
-      <Route path="/admin/bigscreen" element={<BigScreen />} />
+      <Route
+        path="/admin/bigscreen"
+        element={
+          <RequireAdmin>
+            <BigScreen />
+          </RequireAdmin>
+        }
+      />
       <Route
         path="/admin/dashboard"
         element={
-          <RequireAuth>
+          <RequireAdmin>
             <AdminDashboard />
-          </RequireAuth>
+          </RequireAdmin>
         }
       />
-      <Route path="/discoveries" element={<Discoveries />} />
+      <Route
+        path="/discoveries"
+        element={
+          <RequireAdmin>
+            <Discoveries />
+          </RequireAdmin>
+        }
+      />
       <Route path="/master-daily" element={<MasterDaily />} />
       {/* Legacy routes preserved for backward compatibility */}
       <Route path="/dashboard" element={<Dashboard />} />
