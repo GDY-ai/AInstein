@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AInstein - 爱因思探</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); }
+    :root {
+      --bg: #0f1117; --bg2: #1a1d27; --bg3: #242836; --border: #2d3148;
+      --text: #e4e6ed; --text2: #8b8fa3; --accent: #6366f1; --accent2: #818cf8;
+      --green: #22c55e; --yellow: #eab308; --red: #ef4444; --blue: #3b82f6;
+    }
+    @keyframes ainstein-pulse {
+      0%   { transform: scale(0.6); opacity: 0.9; }
+      100% { transform: scale(2.4); opacity: 0; }
+    }
+    @keyframes ainstein-spin {
+      0%   { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes ainstein-fade-in {
+      0%   { opacity: 0; transform: translateY(8px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes bigscreen-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.55; transform: scale(1.4); }
+    }
+  </style>
+  <script type="module" crossorigin src="/ainstein/assets/index-CbfIUhik.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>
