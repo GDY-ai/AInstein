@@ -10,9 +10,9 @@
 
 认知元素是硅基大脑的「**思维粒子**」。所有 Agent 的产出都必须落地为 CE，否则不存在。
 
-### 1.1 12 种 CE 类型
+### 1.1 13 种 CE 类型
 
-完整列表定义于 [cognitive.CE_TYPES](file:///Users/gaodongyue/私人文件/唤活大模型/ainstein/cognitive.py#L24-L37)。按抽象层次分为 5 层：
+完整列表定义于 [cognitive.CE_TYPES](file:///Users/gaodongyue/私人文件/唤活大模型/ainstein/cognitive.py#L25-L39)。按抽象层次分为 5 层 + 1 元认知层：
 
 | 层级 | 类型 | 定义 | 典型内容 | 主要产出角色 |
 | --- | --- | --- | --- | --- |
@@ -28,6 +28,7 @@
 | | `insight` | 跨层洞察 | "梦的'无意义感'恰恰证明它是副产物而非目的" | synthesizer |
 | **L5 集体** | `consensus` | 博弈共识产物 | （由 deliberation 自动生成） | （博弈裁决） |
 | | `dissent` | 博弈分歧产物 | （同上） | （博弈裁决） |
+| **元认知** | `tool_gap` | agent 调查无果时主动产出"我需要什么工具" | "需要能调取实时脑电数据的工具" | investigator / reasoner |
 
 ### 1.2 客观性与可证伪性
 
@@ -672,7 +673,7 @@ P > 1 → 切换收敛模式
 
 | 术语 | 英文 | 实际字段/常量 |
 | --- | --- | --- |
-| 认知元素 | Cognitive Element (CE) | `cognitive_elements` 表，12 类 type |
+| 认知元素 | Cognitive Element (CE) | `cognitive_elements` 表，13 类 type（含元认知 `tool_gap`） |
 | 认知关系 | Cognitive Relation (CR) | `cognitive_relations` 表，10 类 relation |
 | 大脑 | Brain | `brains` 表；`state` 字段而非 `status` |
 | 角色 | Role | `roles` 表；`role_key` 字段（agent_instances 也用 role_key） |

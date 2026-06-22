@@ -250,14 +250,36 @@ _HETEROGENEOUS_STIMULUS_COOLDOWN   = 600    # 同一大脑 10 分钟内只触发
 
 `_force_synthesis_pulse`：构造伪 `CE_HYPOTHESIS_SATURATED` 事件直接派给 synthesizer，prompt 强制要求"基于现有 CE 整合一个推论或结论"。
 
-### 4.5 双轨终止策略
+### 4.5 双模式收敛机制（Fast / Deep）
 
-| 轨道 | 触发条件 | 动作 |
-| --- | --- | --- |
-| **主轨** | synthesizer 产出 `conclusion` 且 `confidence ≥ 0.75` | 自动停止（state=completed） → brain_summary → paper_generator → 上报主脑 |
-| **兜底轨** | CE 总数 ≥ 500 **或** 运行时长 ≥ 3600s | `_force_synthesizer_conclusion`（一次性，`fallback_triggered` 标志位） |
+系统支持两种思考模式，由 `brain.config.mode` 字段控制（`'fast' | 'deep'`，默认 `deep`）：
 
-兜底轨适配开放性、哲学性问题——这类问题难以达到 0.75 高置信度，但也不能让大脑无限思考。
+| 模式 | CE 上限 | 置信阈值 | 最大时长 | force_synthesis 间隔 | synthesizer 最小 CE |
+| --- | --- | --- | --- | --- | --- |
+| **快思考（fast）** | 20 | 0.75 | 300s | 8 CE | 10 |
+| **深度思考（deep，默认）** | 50 | 0.9 | 3600s | 20 CE | 30 |
+
+阈值集中定义于 [orchestrator/constants.py](../orchestrator/constants.py)：
+
+- **深度模式常量**：`_CONVERGENCE_CONFIDENCE_THRESHOLD = 0.9`、`_CONVERGENCE_MIN_CE_COUNT = 50`、`_FALLBACK_DURATION_SECONDS = 3600`、`_FORCED_SYNTHESIS_INTERVAL = 20`、`_SYNTHESIZER_MIN_CE_DISPATCH = 30`
+- **快思考常量（`_FAST_MODE_*`）**：`_FAST_MODE_CE_LIMIT = 20`、`_FAST_MODE_CONFIDENCE_THRESHOLD = 0.75`、`_FAST_MODE_MAX_DURATION = 300`、`_FAST_MODE_FORCE_SYNTHESIS_GAP = 8`、`_FAST_MODE_SYNTHESIZER_MIN = 10`、`_FAST_MODE_FALLBACK_CE = 30`、`_FAST_MODE_MIN_CE_FOR_CONVERGENCE = 5`
+
+切换点：
+
+- `core.py._check_convergence`：根据 `brain.config.mode` 选用主轨置信阈值与最小 CE 门槛；
+- `strategy.py._check_convergence_pressure`：根据模式调整 `_FORCED_SYNTHESIS_INTERVAL`、synthesizer 最小派遣门槛；
+- 双轨终止的兜底参数（`_FALLBACK_CE_COUNT` / `_FALLBACK_DURATION_SECONDS`）在快思考下分别替换为 `_FAST_MODE_FALLBACK_CE` / `_FAST_MODE_MAX_DURATION`。
+
+> 设计意图：让用户在「快速验证」与「严谨产出」之间显式选择，避免单一阈值在不同问题域下都不合适。
+
+### 4.6 双轨终止策略
+
+| 轨道 | 触发条件（深度模式） | 触发条件（快思考） | 动作 |
+| --- | --- | --- | --- |
+| **主轨** | synthesizer 产出 `conclusion` 且 `confidence ≥ 0.9`，且 CE 总数 ≥ 50 | `confidence ≥ 0.75`，且 CE 总数 ≥ 5 | 自动停止（state=completed） → brain_summary → paper_generator → 上报主脑 |
+| **兜底轨** | CE 总数 ≥ 500 **或** 运行时长 ≥ 3600s | CE 总数 ≥ 30 **或** 运行时长 ≥ 300s | `_force_synthesizer_conclusion`（一次性，`fallback_triggered` 标志位） |
+
+兜底轨适配开放性、哲学性问题——这类问题难以达到主轨高置信度，但也不能让大脑无限思考。
 
 ---
 

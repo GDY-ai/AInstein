@@ -78,12 +78,35 @@ DASHSCOPE_API_KEY=<your-dashscope-key>
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v2/apps/anthropic
 RESEARCH_MODEL=kimi-k2.6
 JWT_SECRET=<128 位随机字符串>
+
+# ── v3.2 新增 ─────────────────────────────────
+# GitHub OAuth（一键登录）—— 缺失时仅禁用 GitHub 登录入口，不影响主流程
+GITHUB_OAUTH_CLIENT_ID=<github-app-client-id>
+GITHUB_OAUTH_CLIENT_SECRET=<github-app-client-secret>
+
+# 飞书群机器人 Webhook（主脑日报推送）—— 缺失时主脑日报仅生成不外推
+FEISHU_WEBHOOK_URL=<feishu-webhook-url>
+
 # 可选：
 # AINSTEIN_DB_PATH=/opt/ainstein/data/ainstein.db
 # AINSTEIN_LOG_LEVEL=INFO
 ```
 
+| 变量 | 说明 | 缺失行为 |
+| --- | --- | --- |
+| `GITHUB_OAUTH_CLIENT_ID` | GitHub OAuth App Client ID | 前端隐藏「使用 GitHub 登录」按钮 |
+| `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth App Client Secret | 同上 |
+| `FEISHU_WEBHOOK_URL` | 飞书群机器人 Webhook 地址（主脑日报推送） | 仅落库 + RSS，不推送飞书 |
+
 > ⚠️ **务必 chmod 600**。systemd 通过 `EnvironmentFile=/etc/ainstein.env` 注入。
+
+### 1.5 定时任务
+
+| 任务 | Cron | 实现 | 防重 |
+| --- | --- | --- | --- |
+| `scheduled_master_digest` | 每日 **08:00 UTC**（北京 16:00） | 创世主脑生成跨域日报 + 飞书推送 | 文件锁 `/tmp/ainstein_digest.lock` |
+
+> 任务由 ATA 持锁 worker 内的调度器触发，跨 worker 文件锁保证当日仅执行一次。锁残留时手动清理：`rm -f /tmp/ainstein_digest.lock`。
 
 ---
 

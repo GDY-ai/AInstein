@@ -181,6 +181,34 @@ Agent 提议使用工具
 - 8 位 + 大小写字母 + 数字 + 特殊字符；
 - 前后端双重校验，防止弱口令账号污染思考容器。
 
+### 13. 双思考模式：⚡ 快思考 / 🧠 深度思考
+
+创建大脑时支持选择思考强度——让用户根据**需求紧迫性**和**问题复杂度**自由切换：
+
+| 模式 | 时长 | CE 上限 | 置信阈值 | 适用场景 |
+|---|---|---|---|---|
+| **⚡ 快思考** | ≈5 分钟 | 20 | 0.75 | 快速验证想法、轻量决策、灵感采集 |
+| **🧠 深度思考**（默认） | ≈1 小时 | 50 | 0.9 | 严谨研究、跨领域探索、产出论文 |
+
+模式由 `brain.config.mode` 字段控制，阈值定义在 [orchestrator/constants.py](orchestrator/constants.py)，由 [core.py._check_convergence](orchestrator/core.py) 与 [strategy.py._check_convergence_pressure](orchestrator/strategy.py) 根据模式切换参数。
+
+### 14. 主脑日报（Master Daily Digest）
+
+创世主脑每日 08:00 UTC（北京 16:00）自动生成一份**跨域洞察摘要**——把当日所有分支大脑收敛的精华、主脑自身的内博弈/跨域综合/元认知反思结果，融合成一份「群脑日记」：
+
+- **前端订阅**：`/master-daily` 页面阅读历史日报；
+- **RSS 订阅**：`/api/master-daily.rss` 接入任意 RSS 阅读器；
+- **飞书 Webhook 推送**：通过 `FEISHU_WEBHOOK_URL` 配置一键投递到群机器人；
+- **依赖文件锁防重**：`/tmp/ainstein_digest.lock` 保证多 worker 下当日只生成一次。
+
+### 15. GitHub OAuth 一键登录
+
+降低注册门槛——除了强密码注册，现在也可点击「使用 GitHub 登录」按钮直接以 GitHub 身份创建账号 / 登录。配置 `GITHUB_OAUTH_CLIENT_ID` 与 `GITHUB_OAUTH_CLIENT_SECRET` 即可启用。
+
+### 16. PDF 论文分享 OG 卡片
+
+论文分享链接自动生成符合 **Open Graph** + **Twitter Card** 协议的富媒体预览卡片——在微信、Twitter、Slack、Discord、Telegram 等社交平台粘贴链接，立刻看到带封面、标题、摘要的高质量预览。
+
 ---
 
 ## 四、技术栈
@@ -276,6 +304,12 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env  # 编辑填入 DASHSCOPE_API_KEY
+
+# 可选：GitHub OAuth（一键登录）
+# GITHUB_OAUTH_CLIENT_ID=your_client_id
+# GITHUB_OAUTH_CLIENT_SECRET=your_client_secret
+# 可选：飞书日报推送
+# FEISHU_WEBHOOK_URL=your_webhook_url
 
 # 首次启动会自动初始化数据库 + 创建创世主脑
 flask --app app run --port 9089 --debug
