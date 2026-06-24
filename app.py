@@ -55,6 +55,76 @@ def serve_spa(path: str) -> Any:
     return _no_cache(send_from_directory(FRONTEND_DIST, 'index.html'))
 
 
+# === SEO: robots.txt / sitemap.xml / 百度验证 ===
+
+@app.route('/robots.txt')
+@app.route('/ainstein/robots.txt')
+def robots_txt() -> Any:
+    """robots.txt for search engine crawlers."""
+    txt = (
+        'User-agent: *\n'
+        'Allow: /ainstein/api/public/papers/\n'
+        'Disallow: /ainstein/api/\n'
+        'Allow: /ainstein/\n'
+        '\n'
+        'Sitemap: https://hub.circlegpu.com/ainstein/sitemap.xml\n'
+    )
+    return Response(txt, mimetype='text/plain; charset=utf-8')
+
+
+@app.route('/ainstein/sitemap.xml')
+def sitemap_xml() -> Any:
+    """动态生成 sitemap，列出所有公开论文页面。"""
+    from datetime import datetime
+    try:
+        with db.get_db() as conn:
+            rows = conn.execute(
+                "SELECT share_token, title, created_at FROM paper_shares "
+                "ORDER BY created_at DESC"
+            ).fetchall()
+    except Exception:
+        logger.exception('sitemap: query paper_shares failed')
+        rows = []
+
+    urls_xml = []
+    for row in rows:
+        token = row['share_token']
+        loc = f'https://hub.circlegpu.com/ainstein/api/public/papers/{token}'
+        lastmod = (row['created_at'] or '')[:10] or datetime.utcnow().strftime('%Y-%m-%d')
+        urls_xml.append(
+            f'  <url>\n'
+            f'    <loc>{loc}</loc>\n'
+            f'    <lastmod>{lastmod}</lastmod>\n'
+            f'    <changefreq>monthly</changefreq>\n'
+            f'    <priority>0.8</priority>\n'
+            f'  </url>'
+        )
+
+    # 首页
+    urls_xml.insert(0,
+        '  <url>\n'
+        '    <loc>https://hub.circlegpu.com/ainstein/</loc>\n'
+        f'    <lastmod>{datetime.utcnow().strftime("%Y-%m-%d")}</lastmod>\n'
+        '    <changefreq>daily</changefreq>\n'
+        '    <priority>1.0</priority>\n'
+        '  </url>'
+    )
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + '\n'.join(urls_xml) + '\n'
+        '</urlset>\n'
+    )
+    return Response(xml, mimetype='application/xml; charset=utf-8')
+
+
+@app.route('/ainstein/baidu_verify_<code>.html')
+def baidu_verify(code: str) -> Any:
+    """百度站长平台验证文件路由。"""
+    return Response(code, mimetype='text/html; charset=utf-8')
+
+
 # === Health ===
 
 @app.route('/ainstein/api/health')
@@ -1646,6 +1716,8 @@ _PUBLIC_PAPER_TEMPLATE = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>{title} · AInstein 硅基大脑</title>
 <meta name="description" content="{og_description}" />
+<meta name="keywords" content="{meta_keywords}" />
+<link rel="canonical" href="{og_url}" />
 <!-- Open Graph -->
 <meta property="og:type" content="article" />
 <meta property="og:title" content="{title}" />
@@ -2068,6 +2140,12 @@ def public_paper_view(share_token: str) -> Any:
     og_description = f'关于「{seed_for_og}」的 AI 多智能体协作研究报告 — AInstein 硅基大脑'
     twitter_description = f'关于「{seed_for_og}」的 AI 多智能体协作研究报告'
 
+    # SEO keywords: 取 seed_question 分词作为关键词
+    _kw_src = (seed_question or raw_title).replace('、', ',').replace(' ', ',')
+    _kw_list = [w.strip() for w in _kw_src.split(',') if w.strip()][:8]
+    _kw_list += ['AInstein', '硅基大脑', 'AI研究']
+    meta_keywords = ','.join(_kw_list)
+
     html_text = _PUBLIC_PAPER_TEMPLATE.format(
         title=_html.escape(raw_title),
         seed_question=_html.escape(seed_for_page),
@@ -2075,6 +2153,7 @@ def public_paper_view(share_token: str) -> Any:
         twitter_description=_html.escape(twitter_description, quote=True),
         og_image=_html.escape(og_image, quote=True),
         og_url=_html.escape(og_url, quote=True),
+        meta_keywords=_html.escape(meta_keywords, quote=True),
         brain_id=brain_id,
         view_count=view_count,
         created_at=_html.escape(created_at),
