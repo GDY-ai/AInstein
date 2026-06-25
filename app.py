@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder='frontend/dist', static_url_path='/ainstein/static')
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'ainstein-oauth-csrf-2026')
 FRONTEND_DIST = os.path.join(os.path.dirname(__file__), 'frontend', 'dist')
 
 
@@ -74,13 +75,15 @@ def robots_txt() -> Any:
 
 @app.route('/ainstein/sitemap.xml')
 def sitemap_xml() -> Any:
-    """动态生成 sitemap，列出所有公开论文页面。"""
+    """动态生成 sitemap，列出最近 5000 篇公开论文页面。"""
     from datetime import datetime
+    _SITEMAP_LIMIT = 5000
     try:
         with db.get_db() as conn:
             rows = conn.execute(
                 "SELECT share_token, title, created_at FROM paper_shares "
-                "ORDER BY created_at DESC"
+                "ORDER BY created_at DESC LIMIT ?",
+                (_SITEMAP_LIMIT,),
             ).fetchall()
     except Exception:
         logger.exception('sitemap: query paper_shares failed')
@@ -121,7 +124,14 @@ def sitemap_xml() -> Any:
 
 @app.route('/ainstein/baidu_verify_<code>.html')
 def baidu_verify(code: str) -> Any:
-    """百度站长平台验证文件路由。"""
+    """百度站长平台验证文件路由。
+
+    只返回环境变量中配置的验证码，其他一律 404。
+    """
+    import os as _os
+    allowed_code = _os.environ.get('BAIDU_VERIFY_CODE', '')
+    if not allowed_code or code != allowed_code:
+        return Response('Not Found', status=404, mimetype='text/html; charset=utf-8')
     return Response(code, mimetype='text/html; charset=utf-8')
 
 
@@ -255,20 +265,23 @@ def auth_me() -> Any:
 def github_authorize() -> Any:
     """重定向到 GitHub OAuth 授权页。
 
-    单服务器部署，state 仅作 CSRF 占位（不持久化校验）；
+    使用 session 存储 state 进行 CSRF 校验；
     若未配置 client id，提示前端走密码登录。
     """
     import secrets as _secrets
     from urllib.parse import urlencode
+    from flask import session as _session
     import oauth as _oauth
     if not _oauth.is_configured():
         return jsonify({'error': 'GitHub OAuth 未配置（缺少 GITHUB_OAUTH_CLIENT_ID/SECRET）'}), 503
+    state = _secrets.token_urlsafe(16)
+    _session['oauth_state'] = state
     redirect_uri = request.host_url.rstrip('/') + '/ainstein/api/auth/github/callback'
     params = urlencode({
         'client_id': _oauth.GITHUB_CLIENT_ID,
         'redirect_uri': redirect_uri,
         'scope': 'read:user user:email',
-        'state': _secrets.token_urlsafe(16),
+        'state': state,
         'allow_signup': 'true',
     })
     return redirect(f'{_oauth.GITHUB_AUTHORIZE_URL}?{params}')
@@ -278,6 +291,14 @@ def github_authorize() -> Any:
 def github_callback() -> Any:
     """GitHub OAuth 回调：code → access_token → 用户档案 → 本地账号 → token。"""
     import oauth as _oauth
+    from flask import session as _session
+
+    # CSRF state 校验
+    callback_state = request.args.get('state')
+    session_state = _session.pop('oauth_state', None)
+    if not callback_state or not session_state or callback_state != session_state:
+        logger.warning('OAuth state mismatch: callback=%s session=%s', callback_state, session_state)
+        return redirect('/ainstein/login?error=oauth_failed')
 
     code = request.args.get('code')
     if not code:
@@ -418,9 +439,9 @@ def create_brain_api() -> Any:
     name = (data.get('name') or '').strip()
     seed_question = (data.get('seed_question') or '').strip()
     config = data.get('config') or {}
-    # 快思考模式（Task #15）：新用户默认 fast，可由前端覆盖
+    # 默认深度思考模式，前端可覆盖
     if isinstance(config, dict) and not config.get('mode'):
-        config['mode'] = 'fast'
+        config['mode'] = 'deep'
 
     if not name:
         return jsonify({'error': 'name 必填'}), 400
@@ -1736,6 +1757,7 @@ _PUBLIC_PAPER_TEMPLATE = """<!doctype html>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='22' fill='none' stroke='%2360a5fa' stroke-width='3'/><circle cx='32' cy='32' r='6' fill='%23a5b4fc'/></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<!-- Noto Serif SC is large (~2MB) but necessary for Chinese content; display=swap ensures text is visible during load -->
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=JetBrains+Mono:wght@400;600&family=Noto+Serif+SC:wght@500;700&display=swap" rel="stylesheet" />
 <style>
   :root {{

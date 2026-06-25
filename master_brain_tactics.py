@@ -787,64 +787,77 @@ def generate_master_brain_digest(master_id: Optional[int]) -> Optional[Dict[str,
     title: str
     summary: str
     highlights: List[str]
+    llm_success = False
 
-    # ---- 调用 LLM 生成摘要 ----
-    try:
-        from agents.llm_client import call_llm
-        from config import DIRECTOR_MODEL
+    # ---- 调用 LLM 生成摘要（最多重试 2 次） ----
+    last_error = None
+    for attempt in range(2):
+        try:
+            from agents.llm_client import call_llm
+            from config import DIRECTOR_MODEL
 
-        highlight_lines = []
-        for r in stats.get('_highlight_rows', [])[:5]:
-            text = (r.get('content') or '').strip().replace('\n', ' ')
-            if len(text) > 200:
-                text = text[:198] + '…'
-            highlight_lines.append(f"- [{r.get('type','ce')}](conf={r.get('confidence', 0):.2f}) {text}")
-        highlight_block = '\n'.join(highlight_lines) if highlight_lines else '(暂无显著产出)'
+            highlight_lines = []
+            for r in stats.get('_highlight_rows', [])[:5]:
+                text = (r.get('content') or '').strip().replace('\n', ' ')
+                if len(text) > 200:
+                    text = text[:198] + '…'
+                highlight_lines.append(f"- [{r.get('type','ce')}](conf={r.get('confidence', 0):.2f}) {text}")
+            highlight_block = '\n'.join(highlight_lines) if highlight_lines else '(暂无显著产出)'
 
-        system_prompt = (
-            "你是 AInstein 创世主脑（Master Brain）的『主任日记官』。\n"
-            "请用第一人称，以 3-5 句话凝练过去 24 小时的研究观察日报，风格简洁、克制、可读。"
-            "禁止虚构未提供的数据；禁止使用 emoji。"
-        )
-        user_prompt = (
-            f"【过去 24 小时统计】\n"
-            f"- 新增大脑：{public_stats['new_brains']}\n"
-            f"- 新增认知元素：{public_stats['new_ces']}\n"
-            f"- 主脑自身产出：{public_stats['master_ces']}\n"
-            f"- 博弈触发：{public_stats['deliberations']}\n\n"
-            f"【主脑近 24h 高置信度产出】\n{highlight_block}\n\n"
-            "请输出严格 JSON：\n"
-            '{"title": "主脑日报 · YYYY-MM-DD", '
-            '"summary": "3-5 句一段式日报摘要", '
-            '"highlights": ["亮点 1", "亮点 2", "亮点 3"]}'
-        )
+            system_prompt = (
+                "你是 AInstein 创世主脑（Master Brain）的『主任日记官』。\n"
+                "请用第一人称，以 3-5 句话凝练过去 24 小时的研究观察日报，风格简洁、克制、可读。"
+                "禁止虚构未提供的数据；禁止使用 emoji。"
+            )
+            user_prompt = (
+                f"【过去 24 小时统计】\n"
+                f"- 新增大脑：{public_stats['new_brains']}\n"
+                f"- 新增认知元素：{public_stats['new_ces']}\n"
+                f"- 主脑自身产出：{public_stats['master_ces']}\n"
+                f"- 博弈触发：{public_stats['deliberations']}\n\n"
+                f"【主脑近 24h 高置信度产出】\n{highlight_block}\n\n"
+                "请输出严格 JSON：\n"
+                '{"title": "主脑日报 · YYYY-MM-DD", '
+                '"summary": "3-5 句一段式日报摘要", '
+                '"highlights": ["亮点 1", "亮点 2", "亮点 3"]}'
+            )
 
-        text = call_llm(
-            model=DIRECTOR_MODEL,
-            system_prompt=system_prompt,
-            messages=[{'role': 'user', 'content': user_prompt}],
-            max_tokens=1000,
-            temperature=0.5,
-        )
+            text = call_llm(
+                model=DIRECTOR_MODEL,
+                system_prompt=system_prompt,
+                messages=[{'role': 'user', 'content': user_prompt}],
+                max_tokens=1000,
+                temperature=0.5,
+            )
 
-        from agents.llm_client import extract_json
-        parsed = extract_json(text) if text else None
-        if isinstance(parsed, dict) and parsed.get('summary'):
-            title = (parsed.get('title') or f"主脑日报 · {time.strftime('%Y-%m-%d')}").strip()
-            summary = str(parsed.get('summary') or '').strip()
-            raw_highlights = parsed.get('highlights') or []
-            if isinstance(raw_highlights, list):
-                highlights = [str(h).strip() for h in raw_highlights if str(h).strip()][:5]
+            from agents.llm_client import extract_json
+            parsed = extract_json(text) if text else None
+            if isinstance(parsed, dict) and parsed.get('summary'):
+                title = (parsed.get('title') or f"主脑日报 · {time.strftime('%Y-%m-%d')}").strip()
+                summary = str(parsed.get('summary') or '').strip()
+                raw_highlights = parsed.get('highlights') or []
+                if isinstance(raw_highlights, list):
+                    highlights = [str(h).strip() for h in raw_highlights if str(h).strip()][:5]
+                else:
+                    highlights = []
+                if not highlights:
+                    _, _, highlights = _build_fallback_digest(stats)
+                llm_success = True
+                break
             else:
-                highlights = []
-            if not highlights:
-                _, _, highlights = _build_fallback_digest(stats)
-        else:
-            logger.warning("LLM 返回无法解析为日报 JSON，使用模板兜底")
-            title, summary, highlights = _build_fallback_digest(stats)
+                logger.warning("LLM 返回无法解析为日报 JSON (attempt %d/2)", attempt + 1)
+                last_error = "JSON parse failed"
 
-    except Exception as e:
-        logger.exception("LLM 生成主脑日报失败，使用模板兜底: %s", e)
+        except Exception as e:
+            logger.exception("LLM 生成主脑日报失败 (attempt %d/2): %s", attempt + 1, e)
+            last_error = str(e)
+
+        if attempt < 1:
+            time.sleep(2 ** attempt)  # 指数退避：1s, 2s
+
+    # 全部失败 → 模板兜底
+    if not llm_success:
+        logger.warning("LLM 日报生成失败，使用模板兜底。last_error=%s", last_error)
         title, summary, highlights = _build_fallback_digest(stats)
 
     return {

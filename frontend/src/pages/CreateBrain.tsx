@@ -26,7 +26,7 @@ export default function CreateBrain() {
   const navigate = useNavigate()
   const [name, setName] = useState('')
   const [seed, setSeed] = useState('')
-  const [mode, setMode] = useState<'fast' | 'deep'>('fast')
+  const [mode, setMode] = useState<'fast' | 'deep'>('deep')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [stage, setStage] = useState<'compose' | 'launching'>('compose')

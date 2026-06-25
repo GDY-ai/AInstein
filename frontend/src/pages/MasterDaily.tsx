@@ -105,8 +105,6 @@ export default function MasterDaily() {
           <span style={{ color: DIM, marginLeft: 10, fontSize: 13 }}>· 主脑日报</span>
         </div>
         <nav style={navLinksStyle}>
-          <a style={navLinkStyle} onClick={() => nav('/discoveries')}>发现广场</a>
-          <a style={navLinkStyle} onClick={() => nav('/admin/bigscreen')}>态势大屏</a>
           <a style={{ ...navLinkStyle, color: ACCENT }}>日报</a>
         </nav>
       </header>
