@@ -8,3 +8,4 @@ __pycache__/
 .env
 ._*
 HANDOFF.md
+.qoder/
